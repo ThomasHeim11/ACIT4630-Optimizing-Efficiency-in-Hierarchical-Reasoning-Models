@@ -1,0 +1,2 @@
+checkpoint_example filter=lfs diff=lfs merge=lfs -text
+checkpoint_example/** filter=lfs diff=lfs merge=lfs -text

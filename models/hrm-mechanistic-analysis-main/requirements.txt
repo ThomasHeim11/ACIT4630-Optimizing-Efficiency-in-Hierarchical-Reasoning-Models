@@ -1,0 +1,14 @@
+torch
+adam-atan2
+einops
+tqdm
+coolname
+pydantic
+argdantic
+wandb
+omegaconf
+hydra-core
+huggingface_hub
+matplotlib
+scipy
+scikit-learn
