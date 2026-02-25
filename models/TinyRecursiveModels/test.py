@@ -1,1 +1,0 @@
-print("Testing TRM model")
