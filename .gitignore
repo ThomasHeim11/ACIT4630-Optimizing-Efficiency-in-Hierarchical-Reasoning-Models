@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+
+# Data - too large for git
+data/
+*.json.gz
+*.tar.gz
+*.zip
+
+# Model checkpoints - too large for git
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+
+# Logs
+logs/
+*.log
+wandb/
+outputs/
+multirun/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Mac
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Kaggle credentials - never commit!
+kaggle.json
+.kaggle/
+
+# Hydra outputs
+outputs/
+multirun/
+.hydra/
+
+# Cluster specific
+slurm-*.out
+*.err
+
+# Cluster guide - contains sensitive connection details
+cluster.md
