@@ -5,7 +5,7 @@
 
 ---
 
-## Step 1 — Copy AugmentedHRM into OurMODEL
+## Step 1 — Copy AugmentedHRM into OurMODEL✅
 
 ```bash
 cp -r models/hrm-mechanistic-analysis-main/ models/OurMODEL/
@@ -15,28 +15,32 @@ After this, all SHREK changes go in `models/OurMODEL/` — never touch the origi
 
 ---
 
-## Step 2 — Create Error Signal Module
+## Step 2 — Create Error Signal Module✅
 
 Create new file: `models/OurMODEL/models/hrm/error_signals.py`
 
 Implement three functions:
 
 ### `compute_sudoku_error(logits, seq_len=82)`
+
 - Decode argmax prediction from logits → 9×9 board
 - Reuse logic from `visualization/landscape.py:differentiable_conflict_loss()`
 - Return scalar float (number of row/col/box violations)
 
 ### `compute_maze_error(logits)`
+
 - Decode predicted path from logits
 - Count broken steps (cells that are not adjacent or are walls)
 - Return scalar float
 
 ### `compute_arc_error(logits)`
+
 - Compute entropy of softmax output: `-sum(p * log(p + 1e-8))`
 - High entropy = uncertain = high error
 - Return scalar float (mean over all output positions)
 
 ### `get_error_signal(logits, task_type: str) -> torch.Tensor`
+
 - Dispatcher: routes to the right function based on `task_type`
 - `task_type` values: `"sudoku"`, `"maze"`, `"arc"`
 - Returns a (1,) shaped tensor on the same device as logits
@@ -129,6 +133,7 @@ python3 pretrain.py epochs=2 eval_interval=1 global_batch_size=32
 ```
 
 Check:
+
 - [ ] Loss goes down (not NaN)
 - [ ] `alpha` parameter is included in optimizer
 - [ ] No shape errors in Q-head (hidden+1 dimension)
@@ -138,9 +143,9 @@ Check:
 
 ## File Checklist
 
-| File | Action |
-|------|--------|
-| `models/OurMODEL/` | Copy from hrm-mechanistic-analysis-main (Step 1) |
-| `models/OurMODEL/models/hrm/error_signals.py` | Create new (Step 2) |
-| `models/OurMODEL/models/hrm/hrm_act_v1.py` | Modify (Step 3) |
-| `models/OurMODEL/pretrain.py` | Modify (Step 4) |
+| File                                          | Action                                           |
+| --------------------------------------------- | ------------------------------------------------ |
+| `models/OurMODEL/`                            | Copy from hrm-mechanistic-analysis-main (Step 1) |
+| `models/OurMODEL/models/hrm/error_signals.py` | Create new (Step 2)                              |
+| `models/OurMODEL/models/hrm/hrm_act_v1.py`    | Modify (Step 3)                                  |
+| `models/OurMODEL/pretrain.py`                 | Modify (Step 4)                                  |
