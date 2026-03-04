@@ -23,6 +23,10 @@ AugmentedHRM  →  adds training tricks and random escape
 SHREK         →  keeps training tricks, replaces random escape with learned self-correction
 ```
 
+**An important gap this paper fills.** The mechanistic analysis paper that introduced AugmentedHRM only ever trained and tested on Sudoku-Extreme. It never evaluated AugmentedHRM on ARC-AGI-1, ARC-AGI-2, or Maze-Hard. This means we do not know whether AugmentedHRM's three techniques — data augmentation, bootstrapping, and random perturbation — actually help on benchmarks other than Sudoku. Training and evaluating AugmentedHRM across all four benchmarks is itself a novel contribution of this paper, separate from the SHREK improvements.
+
+**Compute comparison.** Alongside accuracy, we measure the computational cost of all four models using three metrics: (1) *energy consumption* in kilowatt-hours (kWh) measured by CodeCarbon — a Python library that estimates how much electricity a piece of code uses; (2) *FLOPs* (Floating Point Operations) — the number of arithmetic calculations the model performs, computed from the model's configuration and independent of hardware; and (3) *wall-clock inference time* — how many seconds it takes to solve one puzzle. Together these metrics allow us to compare whether accuracy improvements come at an acceptable energy cost, which is central to the Green AI argument.
+
 ---
 
 ## Glossary
@@ -61,13 +65,19 @@ Every technical term used in this document is defined below. Read this before co
 | **PCA (Principal Component Analysis)** | A technique for compressing high-dimensional data into 2D for visualisation. Used in the mechanistic analysis to plot z_H trajectories — each dot in the plot is a reasoning step, and the path shows how the model's internal state evolves. |
 | **Differentiable** | A mathematical property meaning gradients can be computed through a function during training. Error signals must be differentiable (or at least not block gradients) to be usable in the training process. |
 | **Ablation** | A controlled experiment where one component is removed to measure its individual contribution. For example: train SHREK, then re-evaluate with error injection disabled to see how much accuracy it contributes. |
-| **FLOPs (Floating Point Operations)** | A hardware-agnostic measure of computational cost — how many arithmetic operations the model performs. Used in Green AI comparisons alongside energy consumption. |
+| **FLOPs (Floating Point Operations)** | A hardware-agnostic measure of computational cost — how many arithmetic operations the model performs per inference. Computed from the model config (hidden size, number of layers, sequence length). Used in Green AI comparisons because it is independent of which GPU you run on. |
+| **CodeCarbon** | A Python library that estimates energy consumption (kWh) and CO₂ emissions of code by tracking GPU/CPU power draw and runtime. Used to measure the real-world energy cost of inference for each model. Install with `pip install codecarbon`. |
+| **Energy per solution (kWh)** | Total energy consumed divided by the number of puzzles solved correctly. Normalises energy cost by usefulness — a model that uses less energy but also solves fewer puzzles is not automatically better. |
+| **Wall-clock time** | The actual elapsed real-world time (in seconds) to run inference on one puzzle, measured with a timer. Different from FLOPs because it depends on hardware and software efficiency, not just computation count. |
+| **Inference cost** | The combined measure of FLOPs, energy, and time needed to run the model on one input at test time. SHREK has marginally higher inference cost than HRM/AugmentedHRM per step due to the error encoder, reported honestly. |
 
 ---
 
 ## 1. Baseline: What AugmentedHRM Does
 
-SHREK is a direct extension of AugmentedHRM, not a redesign. To understand what SHREK adds, you first need to understand exactly what AugmentedHRM does and what it does not do.
+SHREK is a direct extension of AugmentedHRM, not a redesign. To understand what SHREK adds, you first need to understand exactly what AugmentedHRM does and — critically — what it was never tested on.
+
+**Important: AugmentedHRM was only ever trained and evaluated on Sudoku-Extreme.** The mechanistic analysis paper (paper [3]) that introduced AugmentedHRM never trained on ARC-AGI-1, ARC-AGI-2, or Maze-Hard. Its findings about data augmentation, bootstrapping, and random perturbation are therefore only validated for Sudoku. Whether these techniques help, hurt, or make no difference on other benchmarks is an open question — and answering it is one of the contributions of this paper.
 
 **The HRM inner forward pass — unchanged in both AugmentedHRM and SHREK:**
 ```
@@ -346,3 +356,75 @@ The mechanistic analysis paper visualises `z_H` reasoning trajectories using PCA
 - **AugmentedHRM trajectories** by comparison will show more random-walk behaviour before convergence — reflective of the random perturbation giving it different starting points rather than guided correction.
 
 To produce these plots, `error_signal_t` values must be stored alongside `z_H_trace` in the `require_trace` return path, then both are passed to the existing `pca_trajectory.py` and `landscape.py` visualisation tools.
+
+---
+
+## 11. Compute Comparison Methodology
+
+A core part of the paper is the Green AI comparison — showing not just who is most accurate but who is most efficient. Every model (HRM, TRM, AugmentedHRM, SHREK) is measured on the same three metrics under identical conditions on the same cluster hardware (GH200 GPU, same batch size).
+
+### 11.1 What We Measure
+
+**Energy consumption (kWh) — measured with CodeCarbon**
+
+CodeCarbon is a Python library that wraps any block of code and tracks how much electricity the GPU and CPU consume during that time. It uses GPU power draw (from `nvidia-smi`) multiplied by runtime to estimate kWh, then converts to CO₂ using regional energy mix data.
+
+```python
+from codecarbon import EmissionsTracker
+
+tracker = EmissionsTracker()
+tracker.start()
+# run model inference here
+tracker.stop()
+emissions_data = tracker.final_emissions_data
+# emissions_data.energy_consumed  → kWh
+# emissions_data.emissions        → kg CO₂
+```
+
+We wrap the full evaluation loop (all test puzzles for one benchmark) and record total kWh. We then divide by number of correctly solved puzzles to get **energy per correct solution** — the most meaningful Green AI metric.
+
+**FLOPs per inference — computed analytically**
+
+FLOPs measure how many arithmetic operations the model performs for one puzzle, independent of hardware speed. For a transformer layer with hidden size `d` and sequence length `L`, the dominant cost is the attention and MLP operations. For HRM/SHREK:
+
+```
+FLOPs per inner step ≈ 2 × L × d² × (4 + 2×expansion) × num_layers
+FLOPs per outer step = H_cycles × L_cycles × FLOPs_per_inner_step
+Total FLOPs = avg_ACT_steps × FLOPs_per_outer_step
+```
+
+SHREK adds one extra matrix multiplication per outer step for the error encoder (`seq_len × hidden_size`), which is negligible relative to the full model cost. TRM uses the same formula but with a single shared network and typically fewer parameters.
+
+This number is computed once from the model config — not measured at runtime — and reported in the results table.
+
+**Wall-clock inference time — measured with Python timer**
+
+```python
+import time
+start = time.perf_counter()
+# run model on one batch
+elapsed = time.perf_counter() - start
+time_per_puzzle = elapsed / batch_size
+```
+
+Averaged over 100 batches to reduce noise. Reported in seconds per puzzle. This depends on the specific GPU, so it is only meaningful as a relative comparison between models run on the same hardware in the same session.
+
+### 11.2 Reporting Format
+
+All results go into a single Green AI comparison table in the paper:
+
+| Model | Params | Accuracy (Sudoku) | Energy/solution (Wh) | FLOPs/puzzle (B) | Time/puzzle (ms) |
+|---|---|---|---|---|---|
+| HRM | 27M | | | | |
+| TRM | 7M | | | | |
+| AugmentedHRM | 27M | | | | |
+| SHREK | ~27.5M | | | | |
+
+Repeat for each benchmark. The key claim to test: **do the efficiency-focused models (TRM, SHREK) deliver better accuracy-per-watt than the baseline HRM?**
+
+### 11.3 What to Expect
+
+- **TRM** should be the most efficient per puzzle because it has the fewest parameters (~7M) and a simpler single-network architecture
+- **HRM and AugmentedHRM** are identical in cost per step — AugmentedHRM only adds cost during training (data aug, bootstrapping), not during inference
+- **SHREK** is marginally more expensive than AugmentedHRM per outer step (error encoder forward pass + error signal computation), but may require fewer outer steps on easy puzzles due to faster correction — whether total cost is higher or lower depends on the ACT step count
+- The most interesting metric is **energy per correct solution**, not raw energy — a model that uses 5% more energy but solves 20% more puzzles is clearly better from a Green AI perspective
