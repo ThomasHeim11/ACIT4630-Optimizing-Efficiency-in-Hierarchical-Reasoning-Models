@@ -47,7 +47,7 @@ Implement three functions:
 
 ---
 
-## Step 3 — Modify `hrm_act_v1.py` for SHREK
+## Step 3 — Modify `hrm_act_v1.py` for SHREK✅
 
 File: `models/OurMODEL/models/hrm/hrm_act_v1.py`
 

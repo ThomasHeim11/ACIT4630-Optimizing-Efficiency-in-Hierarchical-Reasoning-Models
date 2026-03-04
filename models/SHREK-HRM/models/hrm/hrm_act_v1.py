@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from models.common import trunc_normal_init_
 from models.layers import rms_norm, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear
 from models.sparse_embedding import CastedSparseEmbedding
+from models.hrm.error_singals import get_error_signal  # SHREK: error signal module
 
 
 @dataclass
@@ -111,7 +112,15 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
 
         self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.vocab_size, bias=False)
-        self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True)
+        # SHREK: q_head takes hidden_size + 1 because we append the stagnation delta scalar
+        # (stagnation delta = how much z_H changed this step — tells the halt decision if the model is stuck)
+        self.q_head       = CastedLinear(self.config.hidden_size + 1, 2, bias=True)
+
+        # SHREK: error_encoder maps the scalar error score -> hidden_size vector for injection into z_H
+        # alpha is a learned gate that starts near 0 so the model first learns the base task,
+        # then gradually learns to use the error signal as training progresses
+        self.error_encoder = nn.Linear(1, self.config.hidden_size)
+        self.alpha         = nn.Parameter(torch.tensor(0.01))
 
         self.puzzle_emb_len = -(self.config.puzzle_emb_ndim // -self.config.hidden_size)  # ceil div
         if self.config.puzzle_emb_ndim > 0:
@@ -178,15 +187,17 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
                 z_L=torch.where(reset_flag.view(-1, 1, 1), self.L_init, carry.z_L),
             )
         else:
-            H_tmp = trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=2).to("cuda")+self.H_init
-            L_tmp = trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=2).to("cuda")+self.L_init
+            # SHREK: removed AugmentedHRM random perturbation (trunc_normal noise on reset).
+            # Random noise is replaced by error-conditioned injection in the forward pass,
+            # which gives the model informed feedback instead of a random push.
+            # Reset to clean default init — same as use_default=True.
             return HierarchicalReasoningModel_ACTV1InnerCarry(
-                z_H=torch.where(reset_flag.view(-1, 1, 1), H_tmp, carry.z_H),
-                z_L=torch.where(reset_flag.view(-1, 1, 1), L_tmp, carry.z_L)
+                z_H=torch.where(reset_flag.view(-1, 1, 1), self.H_init, carry.z_H),
+                z_L=torch.where(reset_flag.view(-1, 1, 1), self.L_init, carry.z_L)
             )
 
 
-    def forward(self, carry: HierarchicalReasoningModel_ACTV1InnerCarry, batch: Dict[str, torch.Tensor], require_trace=False):
+    def forward(self, carry: HierarchicalReasoningModel_ACTV1InnerCarry, batch: Dict[str, torch.Tensor], require_trace=False, task_type: str = "sudoku"):
     #  -> Tuple[HierarchicalReasoningModel_ACTV1InnerCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         seq_info = dict(
             cos_sin=self.rotary_emb() if hasattr(self, "rotary_emb") else None,
@@ -196,6 +207,11 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         input_embeddings = self._input_embeddings(batch["inputs"], batch["puzzle_identifiers"])
 
         z_H_trace = []
+
+        # SHREK: store z_H from the START of this ACT step to compute stagnation delta later.
+        # stagnation delta = how much z_H changed during this full reasoning step.
+        # if z_H barely changed, the model is stuck and the Q-head should know that.
+        z_H_start = carry.z_H
 
         # Forward iterations
         with torch.no_grad():
@@ -220,13 +236,37 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         if require_trace:
             z_H_trace.append(z_H.detach().cpu().clone())
 
-        # LM Outputs
-        new_carry = HierarchicalReasoningModel_ACTV1InnerCarry(z_H=z_H.detach(), z_L=z_L.detach())  # New carry no grad
-        output = self.lm_head(z_H)[:, self.puzzle_emb_len:]
+        # LM Outputs — decode z_H into token predictions
+        output = self.lm_head(z_H)[:, self.puzzle_emb_len:]   # (B, seq_len, vocab_size)
 
-        # Q head
-        q_logits = self.q_head(z_H[:, 0]).to(torch.float32)
-        
+        # SHREK Component 1: Error-Conditioned Injection
+        # 1. compute how wrong the current prediction is (scalar per puzzle in batch)
+        # 2. encode that scalar into a hidden_size vector via error_encoder
+        # 3. scale by alpha (starts ~0.01, model learns how much to trust the signal)
+        # 4. add to z_H so the next reasoning step is aware of current mistakes
+        error     = get_error_signal(output, task_type)                        # (B,)
+        error_emb = self.error_encoder(error.unsqueeze(-1))                    # (B, hidden_size)
+        z_H       = z_H + (self.alpha * error_emb.unsqueeze(1)).to(z_H.dtype) # (B, seq_len, hidden_size)
+
+        # SHREK Component 2: Stagnation Delta for Q-head
+        # measure how much z_H changed compared to when this ACT step started.
+        # small delta = model is stuck in the same state = stagnation signal.
+        # we compute this in float32 for numerical precision, then pass to Q-head.
+        z_H_f     = z_H.float()                                                # (B, seq_len, hidden_size)
+        z_start_f = z_H_start.float()                                          # (B, seq_len, hidden_size)
+        delta     = (z_H_f - z_start_f).norm(dim=(1, 2)) / \
+                    (z_start_f.norm(dim=(1, 2)) + 1e-6)                        # (B,)
+
+        # New carry: store error-injected z_H so next ACT step starts from it
+        new_carry = HierarchicalReasoningModel_ACTV1InnerCarry(z_H=z_H.detach(), z_L=z_L.detach())
+
+        # Q head: append stagnation delta to the CLS token before the halt decision.
+        # CLS token (position 0) summarises the full sequence state.
+        # delta tells the Q-head "I moved this much — am I still making progress?"
+        cls_token = z_H[:, 0].to(torch.float32)                                # (B, hidden_size)
+        q_input   = torch.cat([cls_token, delta.unsqueeze(-1)], dim=-1)        # (B, hidden_size + 1)
+        q_logits  = self.q_head(q_input).to(torch.float32)                     # (B, 2)
+
         if require_trace:
             return z_H_trace, new_carry, output, (q_logits[..., 0], q_logits[..., 1])
         else:
@@ -257,20 +297,20 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
             current_data={k: torch.empty_like(v) for k, v in batch.items()}
         )
         
-    def forward(self, carry: HierarchicalReasoningModel_ACTV1Carry, batch: Dict[str, torch.Tensor], require_trace=False):
+    def forward(self, carry: HierarchicalReasoningModel_ACTV1Carry, batch: Dict[str, torch.Tensor], require_trace=False, task_type: str = "sudoku"):
         # -> Tuple[HierarchicalReasoningModel_ACTV1Carry, Dict[str, torch.Tensor], torch.Tensor]:
         # Update data, carry (removing halted sequences)
         new_inner_carry = self.inner.reset_carry(carry.halted, carry.inner_carry)
-        
+
         new_steps = torch.where(carry.halted, 0, carry.steps)
 
         new_current_data = {k: torch.where(carry.halted.view((-1, ) + (1, ) * (batch[k].ndim - 1)), batch[k], v) for k, v in carry.current_data.items()}
 
-        # Forward inner model
+        # Forward inner model — pass task_type so error signal knows which dataset we're on
         if require_trace:
-            z_H_trace, new_inner_carry, logits, (q_halt_logits, q_continue_logits) = self.inner(new_inner_carry, new_current_data, require_trace=require_trace)
+            z_H_trace, new_inner_carry, logits, (q_halt_logits, q_continue_logits) = self.inner(new_inner_carry, new_current_data, require_trace=require_trace, task_type=task_type)
         else:
-            new_inner_carry, logits, (q_halt_logits, q_continue_logits) = self.inner(new_inner_carry, new_current_data)
+            new_inner_carry, logits, (q_halt_logits, q_continue_logits) = self.inner(new_inner_carry, new_current_data, task_type=task_type)
 
         outputs = {
             "logits": logits,
@@ -301,7 +341,7 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
                 # NOTE: No replay buffer and target networks for computing target Q-value.
                 # As batch_size is large, there're many parallel envs.
                 # Similar concept as PQN https://arxiv.org/abs/2407.04811
-                next_q_halt_logits, next_q_continue_logits = self.inner(new_inner_carry, new_current_data)[-1]
+                next_q_halt_logits, next_q_continue_logits = self.inner(new_inner_carry, new_current_data, task_type=task_type)[-1]
                 
                 outputs["target_q_continue"] = torch.sigmoid(torch.where(is_last_step, next_q_halt_logits, torch.maximum(next_q_halt_logits, next_q_continue_logits)))
 
