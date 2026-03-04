@@ -206,7 +206,21 @@ def compute_lr(base_lr: float, config: PretrainConfig, train_state: TrainState):
     )
 
 
-def train_batch(config: PretrainConfig, train_state: TrainState, batch: Any, global_batch_size: int, rank: int, world_size: int):
+# SHREK: derive task type from the dataset path so the error signal knows which
+# error function to use (sudoku conflict loss, maze adjacency, or arc entropy).
+def get_task_type(data_path: str) -> str:
+    path_lower = data_path.lower()
+    if "sudoku" in path_lower:
+        return "sudoku"
+    elif "maze" in path_lower:
+        return "maze"
+    elif "arc" in path_lower:
+        return "arc"
+    else:
+        raise ValueError(f"Cannot determine task_type from data_path '{data_path}'. Must contain 'sudoku', 'maze', or 'arc'.")
+
+
+def train_batch(config: PretrainConfig, train_state: TrainState, batch: Any, global_batch_size: int, rank: int, world_size: int, task_type: str = "sudoku"):  # SHREK: added task_type param
     train_state.step += 1
     if train_state.step > train_state.total_steps:  # At most train_total_steps
         return
@@ -219,8 +233,8 @@ def train_batch(config: PretrainConfig, train_state: TrainState, batch: Any, glo
         with torch.device("cuda"):
             train_state.carry = train_state.model.initial_carry(batch)  # type: ignore
 
-    # Forward
-    train_state.carry, loss, metrics, _, _, _ = train_state.model(carry=train_state.carry, batch=batch, return_keys=[])
+    # Forward — SHREK: pass task_type so error signal uses the correct error function
+    train_state.carry, loss, metrics, _, _, _ = train_state.model(carry=train_state.carry, batch=batch, return_keys=[], task_type=task_type)
 
     ((1 / global_batch_size) * loss).backward()
 
@@ -263,7 +277,7 @@ def train_batch(config: PretrainConfig, train_state: TrainState, batch: Any, glo
             return reduced_metrics
 
 
-def evaluate(config: PretrainConfig, train_state: TrainState, eval_loader: torch.utils.data.DataLoader, eval_metadata: PuzzleDatasetMetadata, rank: int, world_size: int):
+def evaluate(config: PretrainConfig, train_state: TrainState, eval_loader: torch.utils.data.DataLoader, eval_metadata: PuzzleDatasetMetadata, rank: int, world_size: int, task_type: str = "sudoku"):  # SHREK: added task_type param
     with torch.inference_mode():
         set_ids = {k: idx for idx, k in enumerate(eval_metadata.sets)}
         
@@ -287,7 +301,7 @@ def evaluate(config: PretrainConfig, train_state: TrainState, eval_loader: torch
             segment_exact_accuracies = []
 
             while True:
-                carry, _, metrics, preds, all_finish, _ = train_state.model(carry=carry, batch=batch, return_keys=config.eval_save_outputs)
+                carry, _, metrics, preds, all_finish, _ = train_state.model(carry=carry, batch=batch, return_keys=config.eval_save_outputs, task_type=task_type)  # SHREK: pass task_type
                 
                 
                 segment_loss = metrics["lm_loss"].detach()
@@ -432,6 +446,9 @@ def launch(hydra_config: DictConfig):
     train_loader, train_metadata = create_dataloader(config, "train", test_set_mode=False, epochs_per_iter=train_epochs_per_iter, global_batch_size=config.global_batch_size, rank=RANK, world_size=WORLD_SIZE)
     eval_loader,  eval_metadata  = create_dataloader(config, "test", test_set_mode=True, epochs_per_iter=1, global_batch_size=config.global_batch_size, rank=RANK, world_size=WORLD_SIZE)
 
+    # SHREK: derive task_type once from the data path — reused in every train and eval call
+    task_type = get_task_type(config.data_path)
+
     # Train state
     train_state = init_train_state(config, train_metadata, world_size=WORLD_SIZE)
 
@@ -451,7 +468,7 @@ def launch(hydra_config: DictConfig):
         ############ Train Iter
         train_state.model.train()
         for set_name, batch, global_batch_size in train_loader:
-            metrics = train_batch(config, train_state, batch, global_batch_size, rank=RANK, world_size=WORLD_SIZE)
+            metrics = train_batch(config, train_state, batch, global_batch_size, rank=RANK, world_size=WORLD_SIZE, task_type=task_type)  # SHREK: pass task_type
 
             if RANK == 0 and metrics is not None:
                 wandb.log(metrics, step=train_state.step)
@@ -459,7 +476,7 @@ def launch(hydra_config: DictConfig):
 
         ############ Evaluation
         train_state.model.eval()
-        metrics = evaluate(config, train_state, eval_loader, eval_metadata, rank=RANK, world_size=WORLD_SIZE)
+        metrics = evaluate(config, train_state, eval_loader, eval_metadata, rank=RANK, world_size=WORLD_SIZE, task_type=task_type)  # SHREK: pass task_type
 
         if RANK == 0 and metrics is not None:
             wandb.log(metrics, step=train_state.step)
