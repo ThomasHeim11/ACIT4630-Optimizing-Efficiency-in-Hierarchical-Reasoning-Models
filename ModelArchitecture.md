@@ -3,6 +3,49 @@
 
 ---
 
+## Abstract
+
+SHREK (Self-Correcting Hierarchical Reasoning Compact Model) is a ~27M parameter reasoning model that extends AugmentedHRM by adding two targeted components to the inner reasoning loop: **Error-Conditioned Input Injection** and a **Stagnation-Aware ACT mechanism**.
+
+The core problem SHREK addresses is that HRM and AugmentedHRM reason blindly — at every step the model processes only the original frozen input, with no explicit feedback about whether its current prediction is correct or whether it is making progress. This causes the well-documented failure modes identified by the mechanistic analysis paper: wrong fixed-point traps, the easy-task paradox, and aimless cycling.
+
+SHREK introduces two additions. First, after each outer reasoning step the model decodes its current prediction, computes a differentiable error signal (conflict violations for Sudoku, path validity for Maze, output entropy for ARC-AGI), and injects this signal back into the reasoning loop for the next step — giving the model explicit knowledge of what is wrong with its current answer. Second, a normalised stagnation scalar measuring the change in the model's hidden state between steps is fed to the ACT halting mechanism, allowing the model to learn the difference between productive convergence and a fixed-point trap.
+
+Both components are active during training, not bolted on at inference time. The base architecture — the H-level, L-level transformer blocks, embeddings, and Q-learning ACT — is inherited unchanged from AugmentedHRM. Parameter overhead is under 0.5M regardless of benchmark. SHREK is trained from scratch on all four benchmarks (ARC-AGI-1, ARC-AGI-2, Sudoku-Extreme, Maze-Hard) alongside HRM, TRM, and AugmentedHRM for a fair cross-benchmark comparison.
+
+---
+
+## Glossary
+
+The following terms appear throughout this document. Read these definitions before continuing.
+
+| Term | Plain-language definition |
+|---|---|
+| **Parameters / Weights** | The numbers inside a neural network that are learned during training. HRM has ~27 million. TRM has ~7 million. |
+| **Forward pass** | One run of the model on an input — feeding data in, getting a prediction out. |
+| **Embedding** | Converting a discrete token (e.g. the digit "5") into a vector of numbers the network can process. HRM uses vectors of length 512. |
+| **Hidden size** | The length of internal computation vectors. HRM uses 512. Larger = more expressive but slower. |
+| **Logits** | Raw unnormalised output numbers before converting to probabilities. The highest logit per cell becomes the model's predicted digit. |
+| **Entropy** | A measure of uncertainty. High entropy = the model is spread across many answers (unsure). Low entropy = the model is confident in one answer. |
+| **z_H** | The high-level hidden state. The model's current abstract understanding of the problem. Used to produce the output prediction at each step. Shape: `(batch, seq_len, hidden_size)`. |
+| **z_L** | The low-level hidden state. Detailed working memory that resets every time z_H updates. |
+| **Input injection** | At each reasoning step the original problem embedding is added to z_H before processing: `z_H + input_embeddings`. Prevents the model from forgetting the problem. |
+| **Fixed point** | A state where the model's output stops changing — it has settled. Can be a *correct* fixed point (right answer) or a *wrong* fixed point (stuck on a wrong answer). |
+| **Fixed-point trap** | When the model gets stuck at a wrong fixed point and cannot escape. The central failure mode identified in the mechanistic analysis paper. |
+| **Hierarchical convergence** | HRM's two-level loop: the L-level runs several times per one H-level update. The L-level resets after each H update, keeping it computationally active. |
+| **ACT (Adaptive Computation Time)** | A mechanism that lets the model decide how many reasoning steps to take. Easy problems halt early; hard problems run longer. Avoids wasting compute. |
+| **Q-head** | A small network on top of z_H that predicts `q_halt` and `q_continue`. The model halts when `q_halt > q_continue`. Trained with Q-learning (a reinforcement learning method). |
+| **1-step gradient approximation** | HRM's training trick: only the final reasoning step is differentiated (gradients computed). All prior steps run without gradient tracking to save memory. |
+| **Data augmentation** | Creating extra training examples by transforming existing ones. For Sudoku: shuffling rows, columns, digit mappings. Improves generalisation. |
+| **Model bootstrapping** | Mixing easier hint-augmented puzzles into training so the model learns the task structure before tackling the hardest inputs. Used in AugmentedHRM. |
+| **Conflict loss** | For Sudoku: a measure of how many rule violations exist in the current predicted board (duplicate digits in rows/columns/boxes). Zero = valid solution. Already implemented in `visualization/landscape.py`. |
+| **PCA (Principal Component Analysis)** | Compresses the high-dimensional z_H vector (512 dims) down to 2D for plotting. Used in the mechanistic analysis to visualise the model's reasoning trajectory. |
+| **Stagnation** | When z_H stops changing between consecutive outer steps — the model has converged but may be at a wrong fixed point. Measured as `‖z_H_t − z_H_{t-1}‖ / ‖z_H_{t-1}‖`. |
+| **Error-conditioned injection** | SHREK's first new component. An encoded error signal added to the input injection so the model sees what is wrong with its current prediction at each step. |
+| **Stagnation-aware ACT** | SHREK's second new component. The stagnation scalar is fed to the Q-head so the model learns whether low change means correct convergence or a trap. |
+
+---
+
 ## 1. Baseline: What AugmentedHRM Does
 
 Before describing SHREK, it is important to understand exactly what the preceding model does, because SHREK is a targeted extension, not a redesign.
