@@ -131,7 +131,7 @@ self.q_head          = CastedLinear(config.hidden_size + 1, 2, bias=True)  # alr
 
 ---
 
-## Step 4 — Update `pretrain.py`
+## Step 4 — Update `pretrain.py` ✅
 
 - Remove `get_task_type()` function entirely
 - Remove `task_type` param from `train_batch()` and `evaluate()`
@@ -148,23 +148,9 @@ total_loss = lm_loss + 0.1 * aux_loss
 
 ---
 
-## Step 5 — Two config YAML files
+## Step 5 — Two config YAML files ✅
 
-### `config_large.yaml`
-```yaml
-hidden_size: 512
-num_heads: 8
-expansion: 2
-halt_max_steps: 32
-```
-
-### `config_tiny.yaml`
-```yaml
-hidden_size: 256
-num_heads: 4
-expansion: 2
-halt_max_steps: 32
-```
+Files: `config/arch/shrek_large.yaml` and `config/arch/shrek_tiny.yaml`
 
 Head dimension stays same: 512/8 = 256/4 = 64. Same architecture, just smaller.
 
@@ -173,13 +159,13 @@ Head dimension stays same: 512/8 = 256/4 = 64. Same architecture, just smaller.
 ## Step 6 — Smoke Test
 
 ```bash
-cd models/OurMODEL/
+cd models/SHREK-HRM/
 
-# Large
-python3 pretrain.py --config config_large.yaml data_path=data/sudoku-extreme-full epochs=2 eval_interval=1 global_batch_size=32
+# Large (~27M)
+python3 pretrain.py arch=shrek_large data_path=data/sudoku-extreme-full epochs=2 eval_interval=1 global_batch_size=32
 
-# Tiny
-python3 pretrain.py --config config_tiny.yaml data_path=data/sudoku-extreme-full epochs=2 eval_interval=1 global_batch_size=32
+# Tiny (~7M)
+python3 pretrain.py arch=shrek_tiny data_path=data/sudoku-extreme-full epochs=2 eval_interval=1 global_batch_size=32
 ```
 
 Check:
@@ -210,6 +196,6 @@ Check:
 |---|---|---|
 | `models/OurMODEL/models/hrm/error_singals.py` | Rewrite — flip rate only | ✅ Done |
 | `models/OurMODEL/models/hrm/hrm_act_v1.py` | Steps 3a–3h | ✅ Done |
-| `models/OurMODEL/pretrain.py` | Step 4 | ⬜ Todo |
-| `models/OurMODEL/config_large.yaml` | Create | ⬜ Todo |
-| `models/OurMODEL/config_tiny.yaml` | Create | ⬜ Todo |
+| `models/OurMODEL/pretrain.py` | Step 4 | ✅ Done |
+| `config/arch/shrek_large.yaml` | Create | ✅ Done |
+| `config/arch/shrek_tiny.yaml` | Create | ✅ Done |
