@@ -83,7 +83,7 @@ cp -r models/hrm-mechanistic-analysis-main/ models/OurMODEL/
 
 ---
 
-## Step 2 — Rewrite `error_singals.py`
+## Step 2 — Rewrite `error_singals.py` ✅
 
 File: `models/OurMODEL/models/hrm/error_singals.py`
 
@@ -102,11 +102,11 @@ Works for all datasets. No task rules. No task_type needed.
 
 ---
 
-## Step 3 — Modify `hrm_act_v1.py`
+## Step 3 — Modify `hrm_act_v1.py` ✅
 
 File: `models/OurMODEL/models/hrm/hrm_act_v1.py`
 
-### 3a — New components in `__init__` ✅ (partial — add error_estimator)
+### 3a — New components in `__init__` ✅
 
 ```python
 self.error_estimator = nn.Linear(config.hidden_size, 1)   # NEW: predicts error from z_H
@@ -117,101 +117,17 @@ self.q_head          = CastedLinear(config.hidden_size + 1, 2, bias=True)  # alr
 
 ### 3b — Remove random perturbation on reset ✅
 
-### 3c — Update `InnerCarry` dataclass
+### 3c — Update `InnerCarry` dataclass ✅
 
-```python
-@dataclass
-class HierarchicalReasoningModel_ACTV1InnerCarry:
-    z_H:             torch.Tensor    # (B, seq_len, hidden_size)
-    z_L:             torch.Tensor    # (B, seq_len, hidden_size)
-    prev_pred:       torch.Tensor    # (B, seq_len) int32 — zeros = fresh start
-    prev_q_halt:     torch.Tensor    # (B,) cached Q-halt from previous ACT step
-    prev_q_continue: torch.Tensor    # (B,) cached Q-continue from previous ACT step
-```
+### 3d — Update `empty_carry()` ✅
 
-### 3d — Update `empty_carry()`
+### 3e — Update `reset_carry()` ✅
 
-```python
-prev_pred       = torch.zeros(batch_size, self.config.seq_len, dtype=torch.int32)
-prev_q_halt     = torch.full((batch_size,), -5.0)
-prev_q_continue = torch.full((batch_size,), -5.0)
-```
+### 3f — Update `_Inner.forward()` — remove task_type, add combined error signal ✅
 
-### 3e — Update `reset_carry()`
+### 3g — Remove second inner() call — use cached Q instead ✅
 
-```python
-# Zero out prev_pred and cached Q for sequences that just reset
-new_prev_pred = carry.prev_pred.clone()
-new_prev_pred[reset_flag] = 0
-
-new_prev_q_halt     = carry.prev_q_halt.clone()
-new_prev_q_continue = carry.prev_q_continue.clone()
-new_prev_q_halt[reset_flag]     = -5.0
-new_prev_q_continue[reset_flag] = -5.0
-```
-
-### 3f — Update `_Inner.forward()` — remove task_type, add combined error signal
-
-```python
-# Snapshot for stagnation delta
-z_H_start = carry.z_H
-
-# ... existing no_grad block and 1-step grad ...
-
-output = self.lm_head(z_H)[:, self.puzzle_emb_len:]   # (B, seq_len, vocab)
-
-# --- SHREK: Combined Error Signal ---
-z_H_mean     = z_H[:, self.puzzle_emb_len:].mean(dim=1)               # (B, hidden_size)
-learned_err  = torch.sigmoid(self.error_estimator(z_H_mean))          # (B,)
-flip_err, current_pred = get_error_signal(output, carry.prev_pred)    # (B,), (B, seq_len)
-error        = 0.5 * learned_err + 0.5 * flip_err                     # (B,)
-
-# --- SHREK: Error Injection ---
-error_emb = self.error_encoder(error.unsqueeze(-1))                   # (B, hidden_size)
-with torch.no_grad():
-    self.alpha.clamp_(0.0, 1.0)
-z_H = z_H + (self.alpha * error_emb.unsqueeze(1)).to(z_H.dtype)
-
-# --- SHREK: Stagnation Delta ---
-delta = (z_H.float() - z_H_start.float()).norm(dim=(1,2)) / \
-        (z_H_start.float().norm(dim=(1,2)) + 1e-6)                    # (B,)
-
-# --- SHREK: Q-head ---
-cls_token = z_H[:, 0].to(torch.float32)
-q_input   = torch.cat([cls_token, delta.unsqueeze(-1)], dim=-1)       # (B, hidden_size+1)
-q_logits  = self.q_head(q_input).to(torch.float32)                    # (B, 2)
-
-# New carry: store current pred and Q for next step
-new_carry = HierarchicalReasoningModel_ACTV1InnerCarry(
-    z_H=z_H.detach(), z_L=z_L.detach(),
-    prev_pred=current_pred.detach(),
-    prev_q_halt=q_logits[..., 0].detach(),
-    prev_q_continue=q_logits[..., 1].detach(),
-)
-
-# Also expose learned_err so pretrain.py can compute aux_loss
-return new_carry, output, (q_logits[..., 0], q_logits[..., 1]), learned_err
-```
-
-### 3g — Remove second inner() call — use cached Q instead
-
-```python
-# OLD (runs full model twice — doubles training cost):
-next_q_halt, next_q_continue = self.inner(new_inner_carry, new_current_data)[-1]
-outputs["target_q_continue"] = torch.sigmoid(
-    torch.where(is_last_step, next_q_halt, torch.maximum(next_q_halt, next_q_continue)))
-
-# NEW (use cached Q from carry — 50% cheaper):
-outputs["target_q_continue"] = torch.sigmoid(
-    torch.where(is_last_step,
-        new_inner_carry.prev_q_halt,
-        torch.maximum(new_inner_carry.prev_q_halt, new_inner_carry.prev_q_continue))
-)
-```
-
-### 3h — Remove `task_type` from outer `forward()`
-
-Remove `task_type` param from both `_Inner.forward()` and `HierarchicalReasoningModel_ACTV1.forward()`.
+### 3h — Remove `task_type` from outer `forward()` ✅
 
 ---
 
@@ -292,8 +208,8 @@ Check:
 
 | File | Action | Status |
 |---|---|---|
-| `models/OurMODEL/models/hrm/error_singals.py` | Rewrite — flip rate only | ⬜ Todo |
-| `models/OurMODEL/models/hrm/hrm_act_v1.py` | Steps 3a–3h | ⬜ Todo |
+| `models/OurMODEL/models/hrm/error_singals.py` | Rewrite — flip rate only | ✅ Done |
+| `models/OurMODEL/models/hrm/hrm_act_v1.py` | Steps 3a–3h | ✅ Done |
 | `models/OurMODEL/pretrain.py` | Step 4 | ⬜ Todo |
 | `models/OurMODEL/config_large.yaml` | Create | ⬜ Todo |
 | `models/OurMODEL/config_tiny.yaml` | Create | ⬜ Todo |
