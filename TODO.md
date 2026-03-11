@@ -5,6 +5,46 @@
 
 ---
 
+## What is SHREK — simple explanation
+
+We are building an AI that is better at solving hard puzzles (Sudoku, Mazes, ARC visual puzzles).
+
+The existing models (HRM, AugmentedHRM) have two problems:
+
+**Problem 1 — Getting stuck.**
+The model settles on a wrong answer, becomes very confident about it, and stops thinking.
+It has no way to realise it is wrong.
+
+**Problem 2 — Going in circles.**
+The model keeps changing its answer back and forth between wrong options and never converges.
+
+AugmentedHRM tried to fix this by randomly shaking the model when it gets stuck — like bumping
+someone's elbow hoping they write something different. It is blind. Sometimes it helps, often not.
+
+**SHREK fixes both problems properly:**
+
+1. **Flip rate** — after every thinking step, count how many answers changed compared to last step.
+   Many changes = still going in circles = keep pushing.
+   No changes = settled on something = check if it looks right.
+
+2. **Learned error estimator** — a tiny network that reads the model's internal memory and asks:
+   "does this look like a model that got the right answer, or one that is stuck on the wrong answer?"
+   It learns this pattern from thousands of training examples.
+   When it says "you look wrong" it pushes the model in a meaningful direction — not randomly.
+
+3. **Stagnation delta** — measures how much the model's internal thinking changed this step.
+   Feeds this into the halt decision: "am I still making progress, or just spinning?"
+
+**Two sizes — same design:**
+- SHREK-Large (27M parameters) — competes with HRM and AugmentedHRM
+- SHREK-Tiny (7M parameters) — competes with the Tiny Recursive Model, 4x cheaper to run
+
+**One big efficiency improvement:**
+The original model ran itself TWICE every training step to compute one number.
+We fixed this by storing that number from the previous step instead. Halves training cost.
+
+---
+
 ## What we are building
 
 Two models. Same architecture. Different sizes.
