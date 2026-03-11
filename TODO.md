@@ -5,190 +5,255 @@
 
 ---
 
+## What we are building
+
+Two models. Same architecture. Different sizes.
+
+| Model | Params | hidden_size | num_heads |
+|---|---|---|---|
+| SHREK-Large | ~27M | 512 | 8 |
+| SHREK-Tiny  | ~7M  | 256 | 4 |
+
+One codebase. Two config YAML files. Nothing else changes.
+
+---
+
+## SHREK Components
+
+| Component | What it does | Why |
+|---|---|---|
+| Learned error estimator | Reads z_H → predicts how wrong model is | Catches stuck-but-wrong |
+| Flip rate | Fraction of tokens that changed from last step | Catches oscillating predictions |
+| Combined error = 0.5 × each | One signal per puzzle per step | Covers all failure modes |
+| Error injection | z_H += alpha × error_encoder(error) | Pushes model out of bad states |
+| Alpha gate [0,1] | Learned scale, starts 0.01 | Safe — won't destabilize training |
+| Stagnation delta | How much z_H moved this step | Tells Q-head: stuck vs converged |
+| Q-head with delta | [CLS token, delta] → halt or continue | Better halt decisions |
+| No random perturbation | Clean reset instead of noise | Error injection replaces this |
+| Q-target caching | Store prev Q in carry, remove second inner() call | Cuts training compute ~50% |
+| Auxiliary loss | Trains error estimator to predict real loss | Makes estimator accurate |
+
+---
+
 ## Step 1 — Copy AugmentedHRM into OurMODEL ✅
 
 ```bash
 cp -r models/hrm-mechanistic-analysis-main/ models/OurMODEL/
 ```
 
-After this, all SHREK changes go in `models/OurMODEL/` — never touch the original.
-
 ---
 
-## Step 2 — Create Error Signal Module ✅ (needs update — see Step 2b)
-
-~~Task-specific approach (implemented but being replaced):~~
-~~Three functions: `compute_sudoku_error`, `compute_maze_error`, `compute_arc_error`~~
-~~Dispatcher: `get_error_signal(logits, task_type: str)`~~
-
-**Why we replaced it:** hardcoding rules per dataset is fragile. New dataset = new function.
-
----
-
-## Step 2b — Replace Error Signal with Universal Flip Rate
+## Step 2 — Rewrite `error_singals.py`
 
 File: `models/OurMODEL/models/hrm/error_singals.py`
 
-**Core idea:** instead of checking task-specific rules, compare predictions *across time*.
+Replace all three task-specific functions with one universal function.
 
-At every reasoning step, ask: "Did I change my answer compared to last step?"
+### `get_error_signal(logits, prev_pred) -> (flip_error, current_pred)`
 
-```
-flip_rate = fraction of output tokens that changed from previous step
-```
-
-- `flip_rate = 1.0` → model keeps changing its mind → still oscillating → keep thinking
-- `flip_rate = 0.0` → predictions stabilized → converged (possibly correct)
-
-**Why this is better than entropy:**
-- Entropy measures uncertainty at a single point in time
-- Entropy misses "confident but wrong" (high confidence on the wrong answer)
-- Flip rate catches oscillating wrong answers: even if the model is confident each
-  step, if it keeps predicting different things, flip rate stays high
-
-**Why zeros = first step:**
-- `prev_pred` is initialized to all zeros (token 0 = PAD)
-- Real outputs are almost never all-zero
-- So first step: `flip_rate ≈ 1.0` — correct, maximum uncertainty at start
-
-**Replace the 3 functions with one:**
 ```python
-def get_error_signal(logits, prev_pred) -> Tuple[Tensor, Tensor]:
-    current_pred = logits.argmax(dim=-1).to(torch.int32)     # (B, seq_len)
-    flip_rate    = (current_pred != prev_pred).float().mean(dim=1)  # (B,)
-    return flip_rate, current_pred
+def get_error_signal(logits, prev_pred):
+    current_pred = logits.argmax(dim=-1).to(torch.int32)           # (B, seq_len)
+    flip_error   = (current_pred != prev_pred).float().mean(dim=1) # (B,)
+    return flip_error, current_pred
 ```
 
-Returns both the error AND `current_pred` so the caller can store it in the carry.
-
-Works for all datasets: Sudoku, Maze, ARC-AGI-1, ARC-AGI-2, any future task.
+Works for all datasets. No task rules. No task_type needed.
 
 ---
 
-## Step 3 — Modify `hrm_act_v1.py` for SHREK ✅ (needs partial update — see 3f)
+## Step 3 — Modify `hrm_act_v1.py`
 
 File: `models/OurMODEL/models/hrm/hrm_act_v1.py`
 
-### 3a — Add new parameters to `__init__` ✅
-- `self.error_encoder = nn.Linear(1, hidden_size)`
-- `self.alpha = nn.Parameter(torch.tensor(0.01))`
-- `self.q_head = CastedLinear(hidden_size + 1, 2)` (was `hidden_size, 2`)
+### 3a — New components in `__init__` ✅ (partial — add error_estimator)
+
+```python
+self.error_estimator = nn.Linear(config.hidden_size, 1)   # NEW: predicts error from z_H
+self.error_encoder   = nn.Linear(1, config.hidden_size)   # already exists
+self.alpha           = nn.Parameter(torch.tensor(0.01))   # already exists
+self.q_head          = CastedLinear(config.hidden_size + 1, 2, bias=True)  # already exists
+```
 
 ### 3b — Remove random perturbation on reset ✅
-- `reset_carry(use_default=False)` now does clean init instead of random noise
 
-### 3c — Error injection and stagnation delta in forward ✅
-- Error injection: `z_H = z_H + alpha * error_encoder(error)`
-- Stagnation delta: `delta = norm(z_H - z_H_start) / norm(z_H_start)`
-- Q-head input: `[cls_token, delta]`
+### 3c — Update `InnerCarry` dataclass
 
-### 3d — `task_type` added to forward ✅ (being removed in 3f)
-
-### 3e — `z_H_start` initialized before loop ✅
-
-### 3f — Add `prev_pred` to carry, remove `task_type`
-
-**Changes needed:**
-
-**1. `InnerCarry` dataclass — add `prev_pred`:**
 ```python
 @dataclass
 class HierarchicalReasoningModel_ACTV1InnerCarry:
-    z_H: torch.Tensor
-    z_L: torch.Tensor
-    prev_pred: torch.Tensor   # (B, seq_len) int32 — zeros = fresh start
+    z_H:             torch.Tensor    # (B, seq_len, hidden_size)
+    z_L:             torch.Tensor    # (B, seq_len, hidden_size)
+    prev_pred:       torch.Tensor    # (B, seq_len) int32 — zeros = fresh start
+    prev_q_halt:     torch.Tensor    # (B,) cached Q-halt from previous ACT step
+    prev_q_continue: torch.Tensor    # (B,) cached Q-continue from previous ACT step
 ```
 
-**2. `empty_carry()` — initialize `prev_pred` to zeros:**
+### 3d — Update `empty_carry()`
+
 ```python
-prev_pred=torch.zeros(batch_size, self.config.seq_len, dtype=torch.int32)
+prev_pred       = torch.zeros(batch_size, self.config.seq_len, dtype=torch.int32)
+prev_q_halt     = torch.full((batch_size,), -5.0)
+prev_q_continue = torch.full((batch_size,), -5.0)
 ```
 
-**3. `reset_carry()` — zero out `prev_pred` for halted sequences:**
+### 3e — Update `reset_carry()`
+
 ```python
+# Zero out prev_pred and cached Q for sequences that just reset
 new_prev_pred = carry.prev_pred.clone()
-new_prev_pred[reset_flag] = 0   # reset sequences start fresh
-# add prev_pred=new_prev_pred to both return branches
+new_prev_pred[reset_flag] = 0
+
+new_prev_q_halt     = carry.prev_q_halt.clone()
+new_prev_q_continue = carry.prev_q_continue.clone()
+new_prev_q_halt[reset_flag]     = -5.0
+new_prev_q_continue[reset_flag] = -5.0
 ```
 
-**4. `_Inner.forward()` — update error signal call:**
-```python
-# OLD (task-specific):
-error = get_error_signal(output, task_type)
+### 3f — Update `_Inner.forward()` — remove task_type, add combined error signal
 
-# NEW (universal):
-error, current_pred = get_error_signal(output, carry.prev_pred)
-```
-
-**5. `new_carry` — store current prediction:**
 ```python
+# Snapshot for stagnation delta
+z_H_start = carry.z_H
+
+# ... existing no_grad block and 1-step grad ...
+
+output = self.lm_head(z_H)[:, self.puzzle_emb_len:]   # (B, seq_len, vocab)
+
+# --- SHREK: Combined Error Signal ---
+z_H_mean     = z_H[:, self.puzzle_emb_len:].mean(dim=1)               # (B, hidden_size)
+learned_err  = torch.sigmoid(self.error_estimator(z_H_mean))          # (B,)
+flip_err, current_pred = get_error_signal(output, carry.prev_pred)    # (B,), (B, seq_len)
+error        = 0.5 * learned_err + 0.5 * flip_err                     # (B,)
+
+# --- SHREK: Error Injection ---
+error_emb = self.error_encoder(error.unsqueeze(-1))                   # (B, hidden_size)
+with torch.no_grad():
+    self.alpha.clamp_(0.0, 1.0)
+z_H = z_H + (self.alpha * error_emb.unsqueeze(1)).to(z_H.dtype)
+
+# --- SHREK: Stagnation Delta ---
+delta = (z_H.float() - z_H_start.float()).norm(dim=(1,2)) / \
+        (z_H_start.float().norm(dim=(1,2)) + 1e-6)                    # (B,)
+
+# --- SHREK: Q-head ---
+cls_token = z_H[:, 0].to(torch.float32)
+q_input   = torch.cat([cls_token, delta.unsqueeze(-1)], dim=-1)       # (B, hidden_size+1)
+q_logits  = self.q_head(q_input).to(torch.float32)                    # (B, 2)
+
+# New carry: store current pred and Q for next step
 new_carry = HierarchicalReasoningModel_ACTV1InnerCarry(
-    z_H=z_H.detach(),
-    z_L=z_L.detach(),
-    prev_pred=current_pred.detach(),   # ← store for next step
+    z_H=z_H.detach(), z_L=z_L.detach(),
+    prev_pred=current_pred.detach(),
+    prev_q_halt=q_logits[..., 0].detach(),
+    prev_q_continue=q_logits[..., 1].detach(),
+)
+
+# Also expose learned_err so pretrain.py can compute aux_loss
+return new_carry, output, (q_logits[..., 0], q_logits[..., 1]), learned_err
+```
+
+### 3g — Remove second inner() call — use cached Q instead
+
+```python
+# OLD (runs full model twice — doubles training cost):
+next_q_halt, next_q_continue = self.inner(new_inner_carry, new_current_data)[-1]
+outputs["target_q_continue"] = torch.sigmoid(
+    torch.where(is_last_step, next_q_halt, torch.maximum(next_q_halt, next_q_continue)))
+
+# NEW (use cached Q from carry — 50% cheaper):
+outputs["target_q_continue"] = torch.sigmoid(
+    torch.where(is_last_step,
+        new_inner_carry.prev_q_halt,
+        torch.maximum(new_inner_carry.prev_q_halt, new_inner_carry.prev_q_continue))
 )
 ```
 
-**6. Remove `task_type` parameter from both `_Inner.forward()` and outer `forward()`**
-- Remove from all 3 `self.inner(...)` call sites too
+### 3h — Remove `task_type` from outer `forward()`
+
+Remove `task_type` param from both `_Inner.forward()` and `HierarchicalReasoningModel_ACTV1.forward()`.
 
 ---
 
-## Step 4 — Pass `task_type` from Training Loop ✅ (being reverted — see Step 4b)
-
-~~`get_task_type(data_path)` → `task_type` → passed to model.forward()~~
-
----
-
-## Step 4b — Remove `task_type` from `pretrain.py`
-
-Since `task_type` is no longer needed (error signal is universal), clean up pretrain.py:
+## Step 4 — Update `pretrain.py`
 
 - Remove `get_task_type()` function entirely
-- Remove `task_type: str = "sudoku"` param from `train_batch()` signature
-- Remove `task_type=task_type` from model call inside `train_batch()`
-- Remove `task_type: str = "sudoku"` param from `evaluate()` signature
-- Remove `task_type=task_type` from model call inside `evaluate()`
-- Remove `task_type = get_task_type(config.data_path)` from `launch()`
-- Remove `task_type=task_type` from `train_batch()` and `evaluate()` calls in `launch()`
+- Remove `task_type` param from `train_batch()` and `evaluate()`
+- Remove all `task_type=task_type` passing
+- Add auxiliary loss:
+
+```python
+# In train_batch(), after forward pass:
+# learned_err comes from model output — teaches estimator to predict real loss
+aux_loss   = F.mse_loss(learned_err.squeeze(-1), lm_loss.detach())
+total_loss = lm_loss + 0.1 * aux_loss
+((1 / global_batch_size) * total_loss).backward()
+```
 
 ---
 
-## Step 5 — Smoke Test
+## Step 5 — Two config YAML files
+
+### `config_large.yaml`
+```yaml
+hidden_size: 512
+num_heads: 8
+expansion: 2
+halt_max_steps: 32
+```
+
+### `config_tiny.yaml`
+```yaml
+hidden_size: 256
+num_heads: 4
+expansion: 2
+halt_max_steps: 32
+```
+
+Head dimension stays same: 512/8 = 256/4 = 64. Same architecture, just smaller.
+
+---
+
+## Step 6 — Smoke Test
 
 ```bash
 cd models/OurMODEL/
-python3 pretrain.py data_path=data/sudoku-extreme-full epochs=2 eval_interval=1 global_batch_size=32
+
+# Large
+python3 pretrain.py --config config_large.yaml data_path=data/sudoku-extreme-full epochs=2 eval_interval=1 global_batch_size=32
+
+# Tiny
+python3 pretrain.py --config config_tiny.yaml data_path=data/sudoku-extreme-full epochs=2 eval_interval=1 global_batch_size=32
 ```
 
 Check:
-
 - [ ] Loss goes down (not NaN)
-- [ ] `alpha` parameter is included in optimizer
-- [ ] No shape errors in Q-head (hidden+1 dimension)
-- [ ] Error signal returns a tensor, not a Python float
-- [ ] `prev_pred` is on the correct device (CUDA) — no device mismatch errors
+- [ ] `alpha` stays between 0 and 1
+- [ ] `aux_loss` decreases — error estimator is learning
+- [ ] No device mismatch on `prev_pred`
+- [ ] No shape errors in Q-head
+- [ ] Training is faster — second inner() call is gone
 
 ---
 
-## Summary of SHREK Components
+## Benchmark comparison
 
-| Component | What it does | Where |
-|---|---|---|
-| `error_encoder` + `alpha` | Maps flip rate → z_H injection | `hrm_act_v1.py __init__` |
-| Flip rate error signal | How much did predictions change? | `error_singals.py` |
-| `prev_pred` in carry | Stores last step's predictions | `InnerCarry` dataclass |
-| Stagnation delta | How much did z_H move? | `hrm_act_v1.py forward()` |
-| Q-head `[cls, delta]` | Halt decision with stagnation info | `hrm_act_v1.py forward()` |
-| No random perturbation | Error injection replaces noise | `reset_carry()` |
+| Model | Params | FLOPs/step | Gets stuck? | Universal? |
+|---|---|---|---|---|
+| HRM | 27M | large | Yes | Yes |
+| AugmentedHRM | 27M | large | Sometimes | Yes |
+| Tiny Recursive | ~7M | small | Yes | Yes |
+| SHREK-Large | 27M | large | No | Yes |
+| SHREK-Tiny | ~7M | small | No | Yes |
 
 ---
 
 ## File Checklist
 
 | File | Action | Status |
-| --- | --- | --- |
-| `models/OurMODEL/` | Copy from hrm-mechanistic-analysis-main | ✅ Done |
-| `models/OurMODEL/models/hrm/error_singals.py` | Rewrite with flip rate (Step 2b) | ⬜ Todo |
-| `models/OurMODEL/models/hrm/hrm_act_v1.py` | Add `prev_pred` to carry, remove `task_type` (Step 3f) | ⬜ Todo |
-| `models/OurMODEL/pretrain.py` | Remove `task_type` and `get_task_type` (Step 4b) | ⬜ Todo |
+|---|---|---|
+| `models/OurMODEL/models/hrm/error_singals.py` | Rewrite — flip rate only | ⬜ Todo |
+| `models/OurMODEL/models/hrm/hrm_act_v1.py` | Steps 3a–3h | ⬜ Todo |
+| `models/OurMODEL/pretrain.py` | Step 4 | ⬜ Todo |
+| `models/OurMODEL/config_large.yaml` | Create | ⬜ Todo |
+| `models/OurMODEL/config_tiny.yaml` | Create | ⬜ Todo |
