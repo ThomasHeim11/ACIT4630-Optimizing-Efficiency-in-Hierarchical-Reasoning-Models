@@ -191,7 +191,8 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             z_H=torch.empty(batch_size, self.config.seq_len + self.puzzle_emb_len, self.config.hidden_size, dtype=self.forward_dtype),
             z_L=torch.empty(batch_size, self.config.seq_len + self.puzzle_emb_len, self.config.hidden_size, dtype=self.forward_dtype),
             # SHREK: zeros = no previous prediction — first step gives flip_rate ≈ 1.0
-            prev_pred=torch.zeros(batch_size, self.config.seq_len, dtype=torch.int32),
+            # device=H_init.device ensures prev_pred is on CUDA, matching z_H and logits
+            prev_pred=torch.zeros(batch_size, self.config.seq_len, dtype=torch.int32, device=self.H_init.device),
             # SHREK: init Q cache to -5.0 matching q_head bias init — starts at low confidence
             prev_q_halt=torch.full((batch_size,), -5.0),
             prev_q_continue=torch.full((batch_size,), -5.0),

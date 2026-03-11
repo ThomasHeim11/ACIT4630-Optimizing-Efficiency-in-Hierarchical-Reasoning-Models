@@ -11,7 +11,7 @@ loss:
   loss_type: stablemax_cross_entropy
 
 halt_exploration_prob: 0.1
-halt_max_steps: 32  # SHREK: doubled from 16 — model can think longer
+halt_max_steps: 16  # same as HRM — fair comparison at equal compute
 
 H_cycles: 2
 L_cycles: 2
