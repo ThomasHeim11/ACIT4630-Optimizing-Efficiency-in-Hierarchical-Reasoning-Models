@@ -194,8 +194,9 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             # device=H_init.device ensures prev_pred is on CUDA, matching z_H and logits
             prev_pred=torch.zeros(batch_size, self.config.seq_len, dtype=torch.int32, device=self.H_init.device),
             # SHREK: init Q cache to -5.0 matching q_head bias init — starts at low confidence
-            prev_q_halt=torch.full((batch_size,), -5.0),
-            prev_q_continue=torch.full((batch_size,), -5.0),
+            # device=H_init.device ensures these are on CUDA, matching reset_flag in reset_carry()
+            prev_q_halt=torch.full((batch_size,), -5.0, device=self.H_init.device),
+            prev_q_continue=torch.full((batch_size,), -5.0, device=self.H_init.device),
         )
         
     def reset_carry(self, reset_flag: torch.Tensor, carry: HierarchicalReasoningModel_ACTV1InnerCarry, use_default=True):

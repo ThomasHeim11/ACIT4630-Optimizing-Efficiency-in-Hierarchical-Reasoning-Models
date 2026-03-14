@@ -29,38 +29,57 @@ HRM and AugmentedHRM see the same frozen input at every reasoning step, regardle
 
 ### 1. Error-Conditioned Input Injection
 
-After each outer ACT step, decode the current prediction, compute an error signal, and inject it into the next inner loop:
+After each reasoning step, compute a combined error signal and inject it directly into `z_H`:
 
 ```
-HRM:    z_L = L_level(z_L,  z_H + input_embeddings)
-SHREK:  z_L = L_level(z_L,  z_H + input_embeddings + error_embedding_t)
+HRM:    z_H unchanged after inner loop
+SHREK:  z_H = z_H + alpha × error_encoder(error)
 ```
 
-**Error signal per task:**
-| Task | Signal |
-|---|---|
-| Sudoku | Per-cell conflict indicator (row/col/box violations) |
-| Maze | Per-cell path validity (wall hits, disconnected path) |
-| ARC-AGI | Per-cell output entropy (model uncertainty) |
+The error signal is **universal** — no task-specific rules. It combines two complementary signals:
 
-The error encoder is a single linear layer (`seq_len → hidden_size`) with a learned gate scalar `alpha` initialised near zero. Training starts as standard HRM; `alpha` grows as the model learns to use feedback.
+**Signal A — Flip rate** (works from step 1, no learning needed):
+```
+flip_rate = fraction of output tokens that changed vs previous step
+```
+- High → model is oscillating, still searching
+- Low → model has settled (correctly or stuck)
+
+**Signal B — Learned error estimator** (catches what flip rate misses):
+```
+learned_err = sigmoid(error_estimator(z_H_mean))
+```
+- Reads `z_H` directly and predicts how wrong the model is
+- Trained via auxiliary loss using real `lm_loss` as target
+- Catches "confident but wrong" — flip rate is low but answer is still incorrect
+
+**Combined 50/50:**
+```
+error = 0.5 × flip_rate + 0.5 × learned_err
+```
+
+The error encoder is a single linear layer (`1 → hidden_size`) with a learned gate scalar `alpha` initialised at `0.01`. Training starts as standard HRM; `alpha` grows as the model learns to use the signal.
 
 ### 2. Stagnation-Aware ACT (Q-head)
 
-Measure how much the model's state changed between outer steps:
+Measure how much `z_H` changed during this full outer step:
 
 ```
-stagnation_t = ‖z_H_t − z_H_{t−1}‖ / (‖z_H_{t−1}‖ + ε)
+delta = ‖z_H_end − z_H_start‖ / (‖z_H_start‖ + ε)
 ```
 
 Append this scalar to the Q-head input:
 
 ```
-HRM:    q_logits = q_head(z_H[:, 0])                         # hidden_size → 2
-SHREK:  q_logits = q_head(concat(z_H[:, 0], stagnation_t))   # hidden_size+1 → 2
+HRM:    q_logits = q_head(z_H[:, 0])                    # hidden_size → 2
+SHREK:  q_logits = q_head(concat(z_H[:, 0], delta))     # hidden_size+1 → 2
 ```
 
-The model learns: *low stagnation + low error = halt correctly*, *low stagnation + high error = fixed-point trap, keep going*.
+The model learns: *low delta + low error = halt correctly*, *low delta + high error = fixed-point trap, keep going*.
+
+### 3. Q-target Caching
+
+HRM ran the full model **twice** per outer step to get next-step Q-values for training. SHREK caches Q-values from the current step and reuses them as the target for the next step — same as a DQN target network. This removes one full forward pass per training step (~50% compute saving during training).
 
 ---
 
@@ -111,12 +130,24 @@ Under 2% overhead. Same model class and size as HRM for all practical purposes.
 
 ---
 
-## Green AI Metrics
+## Computational Complexity (FLOPs)
 
-All four models (HRM, TRM, AugmentedHRM, SHREK) are evaluated on:
-- **Accuracy** per benchmark
-- **Energy (kWh)** via CodeCarbon
-- **FLOPs/puzzle** computed analytically from model config
-- **Time/puzzle** wall-clock, averaged over 100 batches
+All four models (HRM, TRM, AugmentedHRM, SHREK) are compared on **GFLOPs per puzzle** — the number of floating point operations for one inference pass on one test input.
 
-Key metric: **energy per correct solution** — efficiency normalised by usefulness.
+**Methodology:** Analytical formula following Kaplan et al. (2020), Table 1. Each multiply-add counts as 2 FLOPs (1 multiply + 1 add). Computed from model config — no runtime measurement needed.
+
+```
+FLOPs per token per layer:
+  Attention QKV:       2 × d_model × 3d_attn
+  Attention scores:    2 × n_ctx × d_attn
+  Attention out proj:  2 × d_attn × d_model
+  FFN:                 2 × 2 × d_model × d_ff
+
+Total per puzzle = avg_act_steps × H_cycles × (L_cycles × L_block + H_block) × seq_len
+```
+
+`avg_act_steps` is the only runtime value — measured as the mean outer ACT steps per puzzle during evaluation.
+
+**Why full formula over the `C ≈ 2N` shortcut:** Although our models satisfy `d_model >> n_ctx/12` (so the shortcut would hold), we use the full per-operation breakdown because `seq_len` differs per benchmark (81 for Sudoku, 900 for ARC/Maze), making the explicit formula more transparent and directly comparable across tasks.
+
+**Source:** Kaplan et al., *Scaling Laws for Neural Language Models*, arXiv:2001.08361, 2020.
