@@ -64,3 +64,4 @@ slurm-*.out
 
 # Cluster guide - contains sensitive connection details
 cluster.md
+TrainingPlan.md
