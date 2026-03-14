@@ -106,10 +106,23 @@ class ACTLossHead(nn.Module):
 
             metrics["q_continue_loss"] = q_continue_loss.detach()
 
+        # SHREK: auxiliary loss — trains error_estimator to predict per-sample lm_loss.
+        # Computed here (not in pretrain.py) so learned_err still has gradients.
+        # per_sample_lm_loss is detached so only error_estimator weights get updated by aux_loss.
+        aux_loss = 0
+        if "learned_err" in outputs:
+            per_sample_lm_loss = (ds_mask * loss / loss_divisor).sum(dim=1).detach()  # (B,)
+            # SHREK fix: normalize target to 0-1 so it matches sigmoid output range.
+            # without this, per_sample_lm_loss can be 0-4+ but learned_err is capped at 1.0.
+            # the estimator would learn nothing useful — always predicting ~1.0.
+            target = per_sample_lm_loss / (per_sample_lm_loss.max() + 1e-6)          # (B,) in [0, 1]
+            aux_loss = F.mse_loss(outputs["learned_err"], target, reduction="sum")
+            metrics["aux_loss"] = aux_loss.detach()
+
         # Filter outputs for return
         detached_outputs = {k: outputs[k].detach() for k in return_keys if k in outputs}
 
         if require_trace:
-            return z_H_trace, new_carry, lm_loss + 0.5 * (q_halt_loss + q_continue_loss), metrics, detached_outputs, new_carry.halted.all(), new_carry.halted & act_halt
+            return z_H_trace, new_carry, lm_loss + 0.5 * (q_halt_loss + q_continue_loss) + 0.1 * aux_loss, metrics, detached_outputs, new_carry.halted.all(), new_carry.halted & act_halt
         else:
-            return new_carry, lm_loss + 0.5 * (q_halt_loss + q_continue_loss), metrics, detached_outputs, new_carry.halted.all(), new_carry.halted & act_halt
+            return new_carry, lm_loss + 0.5 * (q_halt_loss + q_continue_loss) + 0.1 * aux_loss, metrics, detached_outputs, new_carry.halted.all(), new_carry.halted & act_halt
