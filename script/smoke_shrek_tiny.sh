@@ -11,6 +11,8 @@ module load cuda12.6/toolkit/12.6.3
 
 cd ~/HMR/models/SHREK-HRM
 
+pip install --force-reinstall pydantic pydantic-core --user -q
+
 python3 pretrain.py \
     arch=shrek_tiny \
     data_path=../../dataset/data/sudoku-extreme-1k-aug-1000-hint \
