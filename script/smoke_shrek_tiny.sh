@@ -12,7 +12,7 @@ module load cuda12.6/toolkit/12.6.3
 
 cd ~/HMR/models/SHREK-HRM
 
-pip install --force-reinstall pydantic pydantic-core --user -q
+pip install --force-reinstall pydantic pydantic-core numexpr bottleneck --user -q
 
 python3 pretrain.py \
     arch=shrek_tiny \
