@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -l
 #SBATCH --job-name=smoke_tiny
 #SBATCH --partition=gh200q
 #SBATCH --gres=gpu:1
