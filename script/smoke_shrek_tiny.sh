@@ -7,6 +7,7 @@
 #SBATCH --error=/home/thheim/HMR/logs/smoke_tiny_%j.err
 
 source /etc/profile.d/modules.sh
+source ~/.bashrc
 module load cuda12.6/toolkit/12.6.3
 
 cd ~/HMR/models/SHREK-HRM
