@@ -69,10 +69,6 @@ class PretrainConfig(pydantic.BaseModel):
     eval_interval: Optional[int] = None
     eval_save_outputs: List[str] = []
 
-    # SHREK: early stopping — stop if exact_accuracy doesn't improve for patience eval intervals
-    # 0 = disabled. Recommended: 15 (= 15,000 epochs with eval_interval=1000)
-    early_stopping_patience: int = 0
-
 
 @dataclass
 class TrainState:
@@ -451,10 +447,6 @@ def launch(hydra_config: DictConfig):
         wandb.log({"num_params": sum(x.numel() for x in train_state.model.parameters())}, step=0)
         save_code_and_config(config)
 
-    # SHREK: early stopping state
-    best_exact_accuracy = 0.0
-    patience_counter = 0
-
     # Training Loop
     for _iter_id in range(total_iters):
         print (f"[Rank {RANK}, World Size {WORLD_SIZE}]: Epoch {_iter_id * train_epochs_per_iter}")
@@ -478,20 +470,6 @@ def launch(hydra_config: DictConfig):
         ############ Checkpointing
         if RANK == 0 and (config.checkpoint_every_eval or (_iter_id == total_iters - 1)):
             save_train_state(config, train_state)
-
-        ############ SHREK: Early Stopping
-        if config.early_stopping_patience > 0 and RANK == 0 and metrics is not None:
-            current_accuracy = metrics.get("test/exact_accuracy", 0.0)
-            if current_accuracy > best_exact_accuracy:
-                best_exact_accuracy = current_accuracy
-                patience_counter = 0
-                save_train_state(config, train_state)  # save best checkpoint
-            else:
-                patience_counter += 1
-                if patience_counter >= config.early_stopping_patience:
-                    print(f"[Early Stopping] No improvement for {patience_counter} evals. Best exact_accuracy: {best_exact_accuracy:.4f} at epoch {_iter_id * train_epochs_per_iter}")
-                    wandb.log({"early_stopping_epoch": _iter_id * train_epochs_per_iter}, step=train_state.step)
-                    break
 
     # finalize
     if dist.is_initialized():
