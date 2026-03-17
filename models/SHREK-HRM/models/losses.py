@@ -112,10 +112,12 @@ class ACTLossHead(nn.Module):
         aux_loss = 0
         if "learned_err" in outputs:
             per_sample_lm_loss = (ds_mask * loss / loss_divisor).sum(dim=1).detach()  # (B,)
-            # SHREK fix: normalize target to 0-1 so it matches sigmoid output range.
-            # without this, per_sample_lm_loss can be 0-4+ but learned_err is capped at 1.0.
-            # the estimator would learn nothing useful — always predicting ~1.0.
-            target = per_sample_lm_loss / (per_sample_lm_loss.max() + 1e-6)          # (B,) in [0, 1]
+            # SHREK: min-max normalize target to 0-1 so it matches sigmoid output range.
+            # When all losses are equal (early training), target = 0 (no distinguishable error).
+            # When losses vary, target spreads across 0-1 giving the estimator a useful signal.
+            lm_min = per_sample_lm_loss.min()
+            lm_max = per_sample_lm_loss.max()
+            target = (per_sample_lm_loss - lm_min) / (lm_max - lm_min + 1e-6)       # (B,) in [0, 1]
             aux_loss = F.mse_loss(outputs["learned_err"], target, reduction="sum")
             metrics["aux_loss"] = aux_loss.detach()
 
