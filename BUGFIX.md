@@ -1,6 +1,6 @@
-# SHREK-HRM Bug Fixes
+# SHREK-HRM Bug Fixes and Improvements
 
-Three bugs were found and fixed before retraining.
+Three bugs were found and fixed, plus three stability improvements added.
 
 ---
 
@@ -55,3 +55,22 @@ Three bugs were found and fixed before retraining.
 **Fix:** Keep a smoothed shadow copy of all model weights, updated slowly each step: `shadow = 0.999 × shadow + 0.001 × real_weights`. Use the shadow weights for evaluation and checkpoints. This prevents sudden collapses because the shadow copy is resistant to individual bad updates.
 
 **Inspiration:** Taken directly from the TRM paper (Jolicoeur-Martineau, "Less is More: Recursive Reasoning with Tiny Networks", 2025), which uses `ema=True` for all experiments. EMA is also widely used in diffusion models, GANs, and modern ML training pipelines.
+
+---
+
+## Improvement 3: Alpha Warmup for Error Injection
+
+**Problem:** SHREK's error injection uses `alpha` to control injection strength. Previously `alpha` started at `0.01` from step 0. But the error estimator is untrained at step 0 — it outputs random values. The model receives random nudges that destabilize small models. SHREK-Tiny consistently collapsed at step ~3k even with scaled injection (Improvement 1), because the error estimator was still inaccurate when it started affecting training.
+
+**Result:** SHREK-Tiny's accuracy rose to 55% then collapsed to 11% at step ~3k, every run.
+
+**Fix:** Replace the fixed `alpha` with a linear warmup schedule: `alpha` ramps from `0.0` to `0.01` over 5000 training steps. During warmup, the error estimator trains via aux_loss (learning what "wrong" looks like) but its output doesn't affect `z_H`. By the time `alpha` reaches full strength, the estimator is accurate and the model is stable.
+
+```
+Step 0:      alpha = 0.00   (no injection, model learns normally)
+Step 1000:   alpha = 0.002  (tiny nudge, estimator starting to learn)
+Step 2500:   alpha = 0.005  (medium nudge, estimator getting accurate)
+Step 5000+:  alpha = 0.01   (full strength, estimator is trained)
+```
+
+**Inspiration:** Same principle as learning rate warmup, used in all transformer training since Vaswani et al. ("Attention Is All You Need", 2017). Also similar to ReZero (Bachlechner et al., 2020), where residual connections start with a gate at 0 and grow during training.

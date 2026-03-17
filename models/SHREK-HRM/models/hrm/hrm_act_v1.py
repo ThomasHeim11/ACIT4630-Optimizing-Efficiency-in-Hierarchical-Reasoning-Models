@@ -62,6 +62,11 @@ class HierarchicalReasoningModel_ACTV1Config(BaseModel):
     halt_max_steps: int
     halt_exploration_prob: float
 
+    # SHREK: error injection warmup — ramps alpha from 0 to alpha_max over warmup steps.
+    # Prevents small models from collapsing before the error estimator is accurate.
+    alpha_max: float = 0.01
+    alpha_warmup_steps: int = 5000
+
     forward_dtype: str = "bfloat16"
 
 
@@ -124,10 +129,11 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         self.q_head       = CastedLinear(self.config.hidden_size + 1, 2, bias=True)
 
         # SHREK: error_encoder maps the scalar error score -> hidden_size vector for injection into z_H
-        # alpha is a learned gate that starts near 0 so the model first learns the base task,
-        # then gradually learns to use the error signal as training progresses
+        # alpha follows a linear warmup schedule (0 → alpha_max over warmup steps).
+        # This lets the error estimator train before its signal affects z_H.
         self.error_encoder  = nn.Linear(1, self.config.hidden_size)
-        self.alpha          = nn.Parameter(torch.tensor(0.01))
+        # SHREK: step counter for alpha warmup (not a learned parameter)
+        self.register_buffer('_alpha_step', torch.tensor(0, dtype=torch.long))
         # SHREK: error_estimator reads z_H and predicts how wrong the model is.
         # trained via auxiliary loss in pretrain.py using the real lm_loss as target.
         # catches "stuck but wrong" — a model confidently on the wrong answer.
@@ -296,14 +302,17 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
 
         # SHREK: inject combined error into z_H
         # error_encoder maps scalar -> hidden_size vector
-        # alpha (clamped 0-1) controls injection strength — starts at 0.01
+        # alpha follows linear warmup: 0 → alpha_max over warmup steps
         # scaled by 1/sqrt(hidden_size) so injection is proportional to model size
-        # (prevents small models like Tiny from being overwhelmed by the error signal)
         error_emb = self.error_encoder(error.unsqueeze(-1))                    # (B, hidden_size)
-        with torch.no_grad():
-            self.alpha.clamp_(0.0, 1.0)                                        # SHREK: keep alpha in safe range
+        # SHREK: compute alpha from warmup schedule (not learned)
+        # During warmup, alpha ramps linearly from 0 to alpha_max.
+        # After warmup, alpha stays at alpha_max.
+        if self.training:
+            self._alpha_step += 1
+        alpha = self.config.alpha_max * min(1.0, self._alpha_step.item() / max(1, self.config.alpha_warmup_steps))
         scale = math.sqrt(self.config.hidden_size)
-        z_H = z_H + (self.alpha * error_emb.unsqueeze(1) / scale).to(z_H.dtype)  # (B, seq_len, hidden_size)
+        z_H = z_H + (alpha * error_emb.unsqueeze(1) / scale).to(z_H.dtype)   # (B, seq_len, hidden_size)
 
         # SHREK Component 2: Stagnation Delta for Q-head
         # measure how much z_H changed compared to when this ACT step started.
