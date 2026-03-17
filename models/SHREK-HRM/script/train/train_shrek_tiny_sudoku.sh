@@ -23,8 +23,4 @@ python3 pretrain.py \
     +run_name=shrek-tiny-sudoku-extreme \
     +ema=True
 
-echo "=============================="
-echo "Training complete. Running evaluation..."
-echo "=============================="
-
 

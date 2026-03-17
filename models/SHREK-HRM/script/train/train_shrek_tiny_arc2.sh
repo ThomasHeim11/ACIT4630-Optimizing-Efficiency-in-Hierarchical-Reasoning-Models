@@ -23,7 +23,4 @@ python3 pretrain.py \
     +run_name=shrek-tiny-arc2 \
     +ema=True
 
-echo "=============================="
-echo "Training complete."
-echo "For ARC-AGI-2 evaluation, run evaluate.py and use arc_eval.ipynb notebook."
-echo "=============================="
+

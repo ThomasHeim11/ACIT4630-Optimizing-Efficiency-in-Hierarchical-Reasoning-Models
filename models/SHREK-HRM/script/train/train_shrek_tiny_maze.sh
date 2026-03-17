@@ -23,8 +23,5 @@ python3 pretrain.py \
     +run_name=shrek-tiny-maze \
     +ema=True
 
-echo "=============================="
-echo "Training complete. Running evaluation..."
-echo "=============================="
 
 
