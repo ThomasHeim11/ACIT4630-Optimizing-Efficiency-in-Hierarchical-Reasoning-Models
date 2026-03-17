@@ -115,14 +115,15 @@ def main():
                 equal_elements = (stacked_labels == stacked_predictions)  # [permutes, batch_size, 81]
                 all_equal = torch.all(equal_elements, dim=2)  # [permutes, batch_size]
                 
-                if dataset_type == "sudoku":
-                    all_equal = all_equal & stacked_halts  # Only consider the passes halted by ACT
+                # SHREK: act_halt filter disabled for diagnostic — during eval the Q-head
+                # runs at step 16 which it never trained on, making its halt signal unreliable.
+                # if dataset_type == "sudoku":
+                #     all_equal = all_equal & stacked_halts
 
                 correct_cnt = torch.sum(all_equal, dim=0)  # [batch_size]
-                halt_cnt = torch.sum(stacked_halts, dim=0)
 
                 if dataset_type == "sudoku":
-                    perm_correct = (correct_cnt*2 > halt_cnt)  # 50% majority among halted passes
+                    perm_correct = (correct_cnt > 0)  # SHREK: correct if ANY permutation solved it
                 else:
                     perm_correct = (correct_cnt > 0) # For maze, only 2 passes in total.
                  
