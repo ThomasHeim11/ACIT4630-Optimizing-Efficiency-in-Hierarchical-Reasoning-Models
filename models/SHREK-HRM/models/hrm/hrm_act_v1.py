@@ -297,10 +297,13 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         # SHREK: inject combined error into z_H
         # error_encoder maps scalar -> hidden_size vector
         # alpha (clamped 0-1) controls injection strength — starts at 0.01
+        # scaled by 1/sqrt(hidden_size) so injection is proportional to model size
+        # (prevents small models like Tiny from being overwhelmed by the error signal)
         error_emb = self.error_encoder(error.unsqueeze(-1))                    # (B, hidden_size)
         with torch.no_grad():
             self.alpha.clamp_(0.0, 1.0)                                        # SHREK: keep alpha in safe range
-        z_H = z_H + (self.alpha * error_emb.unsqueeze(1)).to(z_H.dtype)       # (B, seq_len, hidden_size)
+        scale = math.sqrt(self.config.hidden_size)
+        z_H = z_H + (self.alpha * error_emb.unsqueeze(1) / scale).to(z_H.dtype)  # (B, seq_len, hidden_size)
 
         # SHREK Component 2: Stagnation Delta for Q-head
         # measure how much z_H changed compared to when this ACT step started.

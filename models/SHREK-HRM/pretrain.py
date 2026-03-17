@@ -2,6 +2,7 @@ from typing import Optional, Any, Sequence, List
 from dataclasses import dataclass
 import os
 import math
+import copy
 import yaml
 import shutil
 
@@ -21,6 +22,7 @@ from adam_atan2 import AdamATan2
 from puzzle_dataset import PuzzleDataset, PuzzleDatasetConfig, PuzzleDatasetMetadata
 from utils.functions import load_model_class, get_model_source_path
 from models.sparse_embedding import CastedSparseEmbeddingSignSGD_Distributed
+from models.ema import EMAHelper
 
 
 class LossConfig(pydantic.BaseModel):
@@ -68,6 +70,10 @@ class PretrainConfig(pydantic.BaseModel):
     checkpoint_every_eval: bool = False
     eval_interval: Optional[int] = None
     eval_save_outputs: List[str] = []
+
+    # EMA (Exponential Moving Average) — smooths weights for stable evaluation
+    ema: bool = False
+    ema_rate: float = 0.999
 
 
 @dataclass
@@ -447,6 +453,16 @@ def launch(hydra_config: DictConfig):
         wandb.log({"num_params": sum(x.numel() for x in train_state.model.parameters())}, step=0)
         save_code_and_config(config)
 
+    # SHREK: EMA (Exponential Moving Average) — smooths weights to prevent catastrophic forgetting.
+    # Shadow weights are updated slowly each step: shadow = 0.999 * shadow + 0.001 * real.
+    # Evaluation and checkpoints use EMA weights for more stable results.
+    # Same technique used by TRM for all their experiments.
+    ema_helper = None
+    if config.ema:
+        print('SHREK: Setup EMA')
+        ema_helper = EMAHelper(mu=config.ema_rate)
+        ema_helper.register(train_state.model)
+
     # Training Loop
     for _iter_id in range(total_iters):
         print (f"[Rank {RANK}, World Size {WORLD_SIZE}]: Epoch {_iter_id * train_epochs_per_iter}")
@@ -459,17 +475,29 @@ def launch(hydra_config: DictConfig):
             if RANK == 0 and metrics is not None:
                 wandb.log(metrics, step=train_state.step)
                 progress_bar.update(train_state.step - progress_bar.n)  # type: ignore
+            # SHREK: update EMA shadow weights after each training step
+            if ema_helper is not None:
+                ema_helper.update(train_state.model)
 
-        ############ Evaluation
-        train_state.model.eval()
-        metrics = evaluate(config, train_state, eval_loader, eval_metadata, rank=RANK, world_size=WORLD_SIZE)
+        ############ Evaluation (SHREK: use EMA weights if enabled)
+        if ema_helper is not None:
+            train_state_eval = copy.deepcopy(train_state)
+            train_state_eval.model = ema_helper.ema_copy(train_state_eval.model)
+        else:
+            train_state_eval = train_state
+        train_state_eval.model.eval()
+        metrics = evaluate(config, train_state_eval, eval_loader, eval_metadata, rank=RANK, world_size=WORLD_SIZE)
 
         if RANK == 0 and metrics is not None:
             wandb.log(metrics, step=train_state.step)
-            
-        ############ Checkpointing
+
+        ############ Checkpointing (SHREK: save EMA weights if enabled)
         if RANK == 0 and (config.checkpoint_every_eval or (_iter_id == total_iters - 1)):
-            save_train_state(config, train_state)
+            save_train_state(config, train_state_eval)
+
+        # SHREK: clean up EMA eval copy to free memory
+        if ema_helper is not None and train_state_eval is not train_state:
+            del train_state_eval
 
     # finalize
     if dist.is_initialized():
