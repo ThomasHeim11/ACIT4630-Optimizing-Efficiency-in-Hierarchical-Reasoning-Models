@@ -9,8 +9,6 @@ source /etc/profile.d/modules.sh
 source ~/.bash_profile
 module load cuda12.6/toolkit/12.6.3
 
-pip install --force-reinstall pydantic pydantic-core numexpr bottleneck --user -q
-
 cd ~/HMR/models/SHREK-HRM
 
 python3 batch_inference.py --checkpoints "checkpoints/Maze-30x30-hard-1k ACT-torch/shrek-large-maze" \
