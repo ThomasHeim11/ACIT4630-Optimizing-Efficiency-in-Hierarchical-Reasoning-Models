@@ -308,9 +308,11 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         # SHREK: compute alpha from warmup schedule (not learned)
         # During warmup, alpha ramps linearly from 0 to alpha_max.
         # After warmup, alpha stays at alpha_max.
-        if self.training:
-            self._alpha_step += 1
-        alpha = self.config.alpha_max * min(1.0, self._alpha_step.item() / max(1, self.config.alpha_warmup_steps))
+        # Uses torch.clamp instead of Python min() to stay compatible with torch.compile.
+        with torch.no_grad():
+            if self.training:
+                self._alpha_step += 1
+            alpha = self.config.alpha_max * torch.clamp(self._alpha_step / self.config.alpha_warmup_steps, max=1.0)
         scale = math.sqrt(self.config.hidden_size)
         z_H = z_H + (alpha * error_emb.unsqueeze(1) / scale).to(z_H.dtype)   # (B, seq_len, hidden_size)
 
