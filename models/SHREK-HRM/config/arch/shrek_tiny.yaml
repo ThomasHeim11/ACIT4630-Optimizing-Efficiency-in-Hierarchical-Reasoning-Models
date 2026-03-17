@@ -21,7 +21,7 @@ L_layers: 4
 
 hidden_size: 256   # SHREK: halved from 512 — ~7M params
 num_heads: 4       # head_dim = 256/4 = 64 (same ratio as Large)
-expansion: 2       # SHREK: halved from 4 — cuts FFN FLOPs by 50%
+expansion: 4       # same as HRM baseline — fair comparison
 
 puzzle_emb_ndim: ${.hidden_size}
 

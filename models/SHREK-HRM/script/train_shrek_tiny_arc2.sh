@@ -1,9 +1,9 @@
 #!/bin/bash -l
-#SBATCH --job-name=shrek_tiny
+#SBATCH --job-name=shrek_tiny_arc2
 #SBATCH --partition=gh200q
 #SBATCH --gres=gpu:1
-#SBATCH --output=/home/thheim/HMR/logs/shrek_tiny_%j.log
-#SBATCH --error=/home/thheim/HMR/logs/shrek_tiny_%j.err
+#SBATCH --output=/home/thheim/HMR/logs/shrek_tiny_arc2_%j.log
+#SBATCH --error=/home/thheim/HMR/logs/shrek_tiny_arc2_%j.err
 
 source /etc/profile.d/modules.sh
 source ~/.bash_profile
@@ -15,11 +15,16 @@ cd ~/HMR/models/SHREK-HRM
 
 python3 pretrain.py \
     arch=shrek_tiny \
-    data_path=../../dataset/data/sudoku-extreme-1k-aug-1000-hint \
+    data_path=../../dataset/data/arc-2-aug-1000 \
     epochs=40000 \
     eval_interval=1000 \
     lr=1e-4 \
     puzzle_emb_lr=1e-4 \
     weight_decay=1.0 \
     puzzle_emb_weight_decay=1.0 \
-    +run_name=shrek-tiny-sudoku-extreme
+    +run_name=shrek-tiny-arc2
+
+echo "=============================="
+echo "Training complete."
+echo "For ARC-AGI-2 evaluation, run evaluate.py and use arc_eval.ipynb notebook."
+echo "=============================="

@@ -372,6 +372,12 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
 
         new_current_data = {k: torch.where(carry.halted.view((-1, ) + (1, ) * (batch[k].ndim - 1)), batch[k], v) for k, v in carry.current_data.items()}
 
+        # SHREK: save PREVIOUS step's Q-values before inner forward overwrites them.
+        # This implements the 1-step delayed Q-target (like DQN target network).
+        # For reset sequences: -5.0 (no prior info). For continuing: previous ACT step's Q-values.
+        prev_step_q_halt = new_inner_carry.prev_q_halt.clone()
+        prev_step_q_continue = new_inner_carry.prev_q_continue.clone()
+
         # SHREK: unpack learned_err from inner forward — needed for auxiliary loss in pretrain.py
         if require_trace:
             z_H_trace, new_inner_carry, logits, (q_halt_logits, q_continue_logits), learned_err = self.inner(new_inner_carry, new_current_data, require_trace=require_trace)
@@ -404,15 +410,14 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
 
                 halted = halted & (new_steps >= min_halt_steps)
 
-                # SHREK: removed second inner() call — was doubling training compute.
-                # original HRM ran the full model twice to get next-step Q-values.
-                # we use the Q-values cached in new_inner_carry.prev_q_halt/continue instead.
-                # these were stored at the end of the inner forward just completed above.
-                # one-step delayed Q target is a valid approximation (similar to DQN target network).
+                # SHREK: Q-target from PREVIOUS step's cached Q-values (1-step delayed).
+                # Original HRM ran inner() twice per step to get next-step Q-values.
+                # SHREK saves ~50% training compute by using the previous step's Q-values,
+                # similar to how DQN uses a delayed target network for stable Q-learning.
                 outputs["target_q_continue"] = torch.sigmoid(
                     torch.where(is_last_step,
-                        new_inner_carry.prev_q_halt,
-                        torch.maximum(new_inner_carry.prev_q_halt, new_inner_carry.prev_q_continue))
+                        prev_step_q_halt,
+                        torch.maximum(prev_step_q_halt, prev_step_q_continue))
                 )
 
         if require_trace:

@@ -107,12 +107,10 @@ First step: `stagnation_0 = 1.0` (no prior state), `error_embedding_0 = 0` (no p
 
 | Config | Hidden | Heads | FFN exp | Params |
 |---|---|---|---|---|
-| SHREK-Large | 512 | 8 | 2 | ~27M |
-| SHREK-Tiny  | 256 | 4 | 2 | ~7M  |
+| SHREK-Large | 512 | 8 | 4 | ~27M |
+| SHREK-Tiny  | 256 | 4 | 4 | ~8M  |
 
-Both use `H_cycles=2, L_cycles=2, H_layers=4, L_layers=4, halt_max_steps=16` — same as HRM for fair comparison.
-
-`expansion=2` (vs HRM's 4) halves FFN FLOPs.
+Both use `H_cycles=2, L_cycles=2, H_layers=4, L_layers=4, halt_max_steps=16, expansion=4` — same as HRM for fair comparison.
 
 ---
 
