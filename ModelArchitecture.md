@@ -125,12 +125,12 @@ Steps 5-6 happen AFTER the inner loop — the error injection modifies z_H for t
 
 ## Model Variants
 
-| Config      | Hidden | Heads | FFN exp | Params |
-| ----------- | ------ | ----- | ------- | ------ |
-| SHREK-Large | 512    | 8     | 4       | ~27M   |
-| SHREK-Tiny  | 256    | 4     | 4       | ~8M    |
+| Config      | Hidden | Heads | H_layers | L_layers | FFN exp | Params |
+| ----------- | ------ | ----- | -------- | -------- | ------- | ------ |
+| SHREK-Large | 512    | 8     | 4        | 4        | 4       | ~27M   |
+| SHREK-Tiny  | 512    | 8     | 2        | 2        | 4       | ~8M    |
 
-Both use `H_cycles=2, L_cycles=2, H_layers=4, L_layers=4, halt_max_steps=16, expansion=4` — identical base config to HRM for fair comparison.
+Both use `H_cycles=2, L_cycles=2, halt_max_steps=16, expansion=4, hidden_size=512`. SHREK-Tiny saves parameters by reducing layers (2+2 vs 4+4), following TRM's approach of keeping hidden_size wide for stable training.
 
 ---
 
