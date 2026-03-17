@@ -74,3 +74,25 @@ Step 5000+:  alpha = 0.01   (full strength, estimator is trained)
 ```
 
 **Inspiration:** Same principle as learning rate warmup, used in all transformer training since Vaswani et al. ("Attention Is All You Need", 2017). Also similar to ReZero (Bachlechner et al., 2020), where residual connections start with a gate at 0 and grow during training.
+
+---
+
+## Improvement 4: Redesign SHREK-Tiny (Wide and Shallow Instead of Thin and Deep)
+
+**Problem:** SHREK-Tiny originally used `hidden_size=256` with 8 layers (4H + 4L) to reach ~7M parameters. Despite all fixes (scaled injection, EMA, alpha warmup), Tiny consistently collapsed at step ~3k — accuracy rose to 55% then crashed to random (11%). The root cause was not the error injection but `hidden_size=256` being too small for each token to represent Sudoku constraints.
+
+**Key insight from TRM:** The TRM paper (Jolicoeur-Martineau, 2025) achieves 7M parameters with `hidden_size=512` and only 2 layers. TRM keeps the hidden state wide (512 dims per token) and saves parameters by using fewer layers, compensating with more reasoning cycles. This works because cycles reuse layers — but nothing can compensate for a hidden_size that's too small.
+
+**Before (thin and deep — collapsed):**
+```
+hidden_size=256, H_layers=4, L_layers=4  →  ~8M params, collapses at step 3k
+```
+
+**After (wide and shallow — stable):**
+```
+hidden_size=512, H_layers=2, L_layers=2  →  ~8M params, stable training
+```
+
+**Fix:** Changed SHREK-Tiny to `hidden_size=512` (same as Large) with `H_layers=2, L_layers=2`. Same parameter count, but each token has enough representation capacity for stable training.
+
+**Inspiration:** TRM architecture design (Jolicoeur-Martineau, "Less is More: Recursive Reasoning with Tiny Networks", 2025).
