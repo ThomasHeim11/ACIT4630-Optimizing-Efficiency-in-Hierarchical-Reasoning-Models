@@ -28,7 +28,4 @@ echo "=============================="
 echo "Training complete. Running evaluation..."
 echo "=============================="
 
-python3 batch_inference.py \
-    --checkpoints "checkpoints/Sudoku-extreme-1k-aug-1000-hint ACT-torch/shrek-large-sudoku-extreme" \
-    --permutes 9 \
-    --dataset sudoku
+
