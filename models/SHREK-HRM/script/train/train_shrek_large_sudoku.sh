@@ -20,7 +20,6 @@ python3 pretrain.py \
     puzzle_emb_lr=1e-4 \
     weight_decay=1.0 \
     puzzle_emb_weight_decay=1.0 \
-    +run_name=shrek-large-sudoku-extreme \
     +ema=True
 
 
