@@ -1,6 +1,6 @@
 # SHREK-HRM Bug Fixes and Improvements
 
-Four bugs were found and fixed, plus four stability improvements added.
+Four bugs were found and fixed, plus four stability improvements added. Bug 4 went through multiple iterations before arriving at the final solution (Bug 4c).
 
 ---
 
@@ -101,11 +101,14 @@ hidden_size=512, H_layers=2, L_layers=2  →  ~8M params, stable training
 
 ---
 
-## Bug 4: Q-Target Looked Backwards Instead of Forwards (Previous-Step → Double Forward Pass)
+## Bug 4: Q-Target Looked Backwards Instead of Forwards
+
+This bug went through three iterations (4a → 4b → 4c) before arriving at the correct solution.
+
+### Bug 4a: Root Cause — Q-Target Used Step T-1 Instead of T+1
 
 **Problem:** Bug 2's "fix" introduced a worse bug. The Q-head needs to know: "what's the value of thinking *one more step*?" This requires Q-values from the *next* state (step T+1). The original HRM gets this by running `inner()` a second time (double forward pass). Bug 2's fix changed SHREK to use Q-values cached from the *previous* step (step T-1) — looking backwards instead of forwards, a 2-step discrepancy from the correct target.
 
-**How Q-learning should work:**
 ```
 Original HRM:  target = Q(step T+1)  ← "what if I keep going?"     ✓ correct
 Bug 2 "fix":   target = Q(step T-1)  ← "what was it before?"       ✗ backwards
@@ -113,18 +116,46 @@ Bug 2 "fix":   target = Q(step T-1)  ← "what was it before?"       ✗ backwar
 
 **Result:** `q_continue_loss` rose continuously throughout training (0.05 → 0.25 by 50k steps) because the target was nonsensical. The diverging loss sent conflicting gradients through the shared `z_H` representation, causing `lm_loss` to plateau at 2.0 (near random guessing). The model achieved only 38% per-cell accuracy on test and 0% exact puzzle accuracy.
 
-**Evidence from wandb:**
-- Before fix: `lm_loss` stuck at 2.0, `q_continue_loss` rising forever
-- After fix: `lm_loss` dropped to 1.35, `q_continue_loss` decreasing
+### Bug 4b: First Fix Attempt — Double Forward Pass (Caused New Issues)
 
-**Fix:** Reverted to the original HRM's double forward pass — run `inner()` a second time after the main forward to get next-step Q-values. This is correct Q-learning: the target represents the value of the next state. SHREK loses the "cached Q-target saves 50% compute" claim, but the model actually learns.
+**Fix attempt:** Reverted to the original HRM's double forward pass — run `inner()` a second time to get step T+1 Q-values.
 
 ```python
-# Before (Bug 2's broken fix — used previous step's Q-values):
-prev_step_q_halt = new_inner_carry.prev_q_halt.clone()
-target = sigmoid(max(prev_step_q_halt, prev_step_q_continue))
-
-# After (correct — same as original HRM):
 next_q_halt, next_q_continue = self.inner(new_inner_carry, new_current_data)[-2]
 target = sigmoid(max(next_q_halt, next_q_continue))
 ```
+
+**New problem:** The second `inner()` call incremented `_alpha_step` a second time per training step, making the alpha warmup complete at step ~2500 instead of 5000. Error injection reached full strength before the error estimator was trained, destabilizing training after step ~6k.
+
+**Evidence from wandb:** `q_continue_loss` initially decreased (steps 0-6k) then rose sharply. `lm_loss` spiked from 1.35 back to 1.8 around step 8k.
+
+**Additional problem:** Removing the now-unused `prev_q_halt`/`prev_q_continue` fields from the carry dataclass caused a `torch.compile` regression — the compiled model produced worse results with a 3-field vs 5-field dataclass. The fields must be kept.
+
+### Bug 4c: Final Fix — Current-Step Cached Q-Values (Step T)
+
+**Fix:** Use the Q-values that `inner()` writes into `new_inner_carry` after the forward pass. These are from the *current* step (step T) — not step T-1 (Bug 2's broken version) and not step T+1 (double forward). Step T is a close approximation to T+1 since the model changes slowly between steps.
+
+```python
+# Bug 2 "fix" (broken — step T-1):
+prev_step_q_halt = new_inner_carry.prev_q_halt.clone()  # BEFORE inner()
+inner()
+target = sigmoid(max(prev_step_q_halt, prev_step_q_continue))
+
+# Bug 4b (correct but unstable — step T+1):
+inner()
+next_q_halt, next_q_continue = self.inner(...)[-2]  # SECOND inner() call
+target = sigmoid(max(next_q_halt, next_q_continue))
+
+# Bug 4c final fix (correct and stable — step T):
+inner()  # writes Q-values into new_inner_carry
+target = sigmoid(max(new_inner_carry.prev_q_halt, new_inner_carry.prev_q_continue))
+```
+
+**Why this works:**
+- `new_inner_carry.prev_q_halt` contains Q-values from AFTER `inner()` runs (step T, not T-1)
+- Values are detached (no gradient through target = stable Q-learning)
+- No second `inner()` call = `_alpha_step` increments once = alpha warmup correct
+- `prev_q` fields stay in carry = `torch.compile` happy
+- Saves ~50% training compute compared to double forward pass
+
+**Evidence from wandb:** `q_continue_loss` decreases steadily with no destabilization. `lm_loss` drops to 1.35 and stays stable through all training steps tested.
