@@ -414,15 +414,15 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
 
                 halted = halted & (new_steps >= min_halt_steps)
 
-                # SHREK: Q-target via double forward pass (same as original HRM).
-                # Run inner() a second time to get NEXT step's Q-values.
-                # This is correct Q-learning: target = value of the next state.
-                next_q_halt_logits, next_q_continue_logits = self.inner(new_inner_carry, new_current_data)[-2]
-
+                # SHREK: Q-target from current step's Q-values (cached in carry after inner()).
+                # Uses step T (current) instead of step T+1 (double forward).
+                # Saves ~50% training compute and avoids _alpha_step double increment.
+                # prev_q values are written by inner() AFTER the forward pass,
+                # so they represent the current step — not the previous step (Bug 4).
                 outputs["target_q_continue"] = torch.sigmoid(
                     torch.where(is_last_step,
-                        next_q_halt_logits,
-                        torch.maximum(next_q_halt_logits, next_q_continue_logits))
+                        new_inner_carry.prev_q_halt,
+                        torch.maximum(new_inner_carry.prev_q_halt, new_inner_carry.prev_q_continue))
                 )
 
         if require_trace:
