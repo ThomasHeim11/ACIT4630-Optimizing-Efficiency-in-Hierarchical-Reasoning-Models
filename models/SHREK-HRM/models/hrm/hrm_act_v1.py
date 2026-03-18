@@ -20,10 +20,6 @@ class HierarchicalReasoningModel_ACTV1InnerCarry:
     # SHREK: prev_pred stores last step's argmax predictions for flip rate computation.
     # zeros = fresh start (first step after init or reset gives flip_rate ≈ 1.0)
     prev_pred: torch.Tensor        # (B, seq_len) int32
-    # SHREK: cached Q-values from previous ACT step.
-    # used instead of running inner() a second time — removes the double forward pass.
-    prev_q_halt: torch.Tensor      # (B,) float32
-    prev_q_continue: torch.Tensor  # (B,) float32
 
 
 @dataclass
@@ -199,32 +195,24 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             # SHREK: zeros = no previous prediction — first step gives flip_rate ≈ 1.0
             # device=H_init.device ensures prev_pred is on CUDA, matching z_H and logits
             prev_pred=torch.zeros(batch_size, self.config.seq_len, dtype=torch.int32, device=self.H_init.device),
-            # SHREK: init Q cache to -5.0 matching q_head bias init — starts at low confidence
-            # device=H_init.device ensures these are on CUDA, matching reset_flag in reset_carry()
-            prev_q_halt=torch.full((batch_size,), -5.0, device=self.H_init.device),
-            prev_q_continue=torch.full((batch_size,), -5.0, device=self.H_init.device),
         )
         
     def reset_carry(self, reset_flag: torch.Tensor, carry: HierarchicalReasoningModel_ACTV1InnerCarry, use_default=True):
         # SHREK: zero out prev_pred for reset sequences so they start fresh.
         # a reset sequence is one that just halted — it will solve a new puzzle next.
         # zeroing prev_pred means first step gives flip_rate ≈ 1.0 (maximum uncertainty).
+        # SHREK: zero out prev_pred for reset sequences, carry forward for continuing ones.
         new_prev_pred = torch.where(
             reset_flag.view(-1, 1),
             torch.zeros_like(carry.prev_pred),
             carry.prev_pred
         )
-        # SHREK: reset cached Q-values for reset sequences back to low confidence (-5.0)
-        new_prev_q_halt     = torch.where(reset_flag, torch.full_like(carry.prev_q_halt,     -5.0), carry.prev_q_halt)
-        new_prev_q_continue = torch.where(reset_flag, torch.full_like(carry.prev_q_continue, -5.0), carry.prev_q_continue)
 
         if use_default:
             return HierarchicalReasoningModel_ACTV1InnerCarry(
                 z_H=torch.where(reset_flag.view(-1, 1, 1), self.H_init, carry.z_H),
                 z_L=torch.where(reset_flag.view(-1, 1, 1), self.L_init, carry.z_L),
-                prev_pred=new_prev_pred,           # SHREK: carry forward or zero on reset
-                prev_q_halt=new_prev_q_halt,       # SHREK: carry forward or reset to -5.0
-                prev_q_continue=new_prev_q_continue,
+                prev_pred=new_prev_pred,
             )
         else:
             # SHREK: removed AugmentedHRM random perturbation (trunc_normal noise on reset).
@@ -234,9 +222,7 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             return HierarchicalReasoningModel_ACTV1InnerCarry(
                 z_H=torch.where(reset_flag.view(-1, 1, 1), self.H_init, carry.z_H),
                 z_L=torch.where(reset_flag.view(-1, 1, 1), self.L_init, carry.z_L),
-                prev_pred=new_prev_pred,           # SHREK: carry forward or zero on reset
-                prev_q_halt=new_prev_q_halt,       # SHREK: carry forward or reset to -5.0
-                prev_q_continue=new_prev_q_continue,
+                prev_pred=new_prev_pred,
             )
 
 
@@ -333,15 +319,11 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         q_logits  = self.q_head(q_input).to(torch.float32)                     # (B, 2)
 
         # New carry: store error-injected z_H so next ACT step starts from it
-        # SHREK: q_logits must be computed before new_carry so we can cache them
         new_carry = HierarchicalReasoningModel_ACTV1InnerCarry(
             z_H=z_H.detach(),
             z_L=z_L.detach(),
             # SHREK: store current predictions — next step compares against these for flip rate
             prev_pred=current_pred.detach(),
-            # SHREK: cache Q-values — outer forward uses these instead of running inner() again
-            prev_q_halt=q_logits[..., 0].detach(),
-            prev_q_continue=q_logits[..., 1].detach(),
         )
 
         # SHREK: also return learned_err so pretrain.py can compute auxiliary loss
