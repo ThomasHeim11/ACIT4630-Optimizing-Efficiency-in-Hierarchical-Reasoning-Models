@@ -386,13 +386,7 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
 
         new_current_data = {k: torch.where(carry.halted.view((-1, ) + (1, ) * (batch[k].ndim - 1)), batch[k], v) for k, v in carry.current_data.items()}
 
-        # SHREK: save PREVIOUS step's Q-values before inner forward overwrites them.
-        # This implements the 1-step delayed Q-target (like DQN target network).
-        # For reset sequences: -5.0 (no prior info). For continuing: previous ACT step's Q-values.
-        prev_step_q_halt = new_inner_carry.prev_q_halt.clone()
-        prev_step_q_continue = new_inner_carry.prev_q_continue.clone()
-
-        # SHREK: unpack learned_err from inner forward — needed for auxiliary loss in pretrain.py
+        # SHREK: run inner forward — unpack learned_err for auxiliary loss in pretrain.py
         if require_trace:
             z_H_trace, new_inner_carry, logits, (q_halt_logits, q_continue_logits), learned_err = self.inner(new_inner_carry, new_current_data, require_trace=require_trace)
         else:
@@ -424,14 +418,15 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
 
                 halted = halted & (new_steps >= min_halt_steps)
 
-                # SHREK: Q-target from PREVIOUS step's cached Q-values (1-step delayed).
-                # Original HRM ran inner() twice per step to get next-step Q-values.
-                # SHREK saves ~50% training compute by using the previous step's Q-values,
-                # similar to how DQN uses a delayed target network for stable Q-learning.
+                # SHREK: Q-target via double forward pass (same as original HRM).
+                # Run inner() a second time to get NEXT step's Q-values.
+                # This is correct Q-learning: target = value of the next state.
+                next_q_halt_logits, next_q_continue_logits = self.inner(new_inner_carry, new_current_data)[-2]
+
                 outputs["target_q_continue"] = torch.sigmoid(
                     torch.where(is_last_step,
-                        prev_step_q_halt,
-                        torch.maximum(prev_step_q_halt, prev_step_q_continue))
+                        next_q_halt_logits,
+                        torch.maximum(next_q_halt_logits, next_q_continue_logits))
                 )
 
         if require_trace:
