@@ -103,7 +103,7 @@ hidden_size=512, H_layers=2, L_layers=2  →  ~8M params, stable training
 
 ## Bug 4: Q-Target Looked Backwards Instead of Forwards
 
-This bug went through three iterations (4a → 4b → 4c) before arriving at the correct solution.
+This bug went through four iterations (4a → 4b → 4c → 4d) before arriving at the correct solution.
 
 ### Bug 4a: Root Cause — Q-Target Used Step T-1 Instead of T+1
 
@@ -131,31 +131,46 @@ target = sigmoid(max(next_q_halt, next_q_continue))
 
 **Additional problem:** Removing the now-unused `prev_q_halt`/`prev_q_continue` fields from the carry dataclass caused a `torch.compile` regression — the compiled model produced worse results with a 3-field vs 5-field dataclass. The fields must be kept.
 
-### Bug 4c: Final Fix — Current-Step Cached Q-Values (Step T)
+### Bug 4c: Failed Fix — Current-Step Cached Q-Values (Step T)
 
-**Fix:** Use the Q-values that `inner()` writes into `new_inner_carry` after the forward pass. These are from the *current* step (step T) — not step T-1 (Bug 2's broken version) and not step T+1 (double forward). Step T is a close approximation to T+1 since the model changes slowly between steps.
+**Fix attempt:** Use the Q-values that `inner()` writes into `new_inner_carry` after the forward pass. These are from the *current* step (step T) — saves 50% compute by avoiding the second `inner()` call.
 
 ```python
-# Bug 2 "fix" (broken — step T-1):
-prev_step_q_halt = new_inner_carry.prev_q_halt.clone()  # BEFORE inner()
-inner()
-target = sigmoid(max(prev_step_q_halt, prev_step_q_continue))
-
-# Bug 4b (correct but unstable — step T+1):
-inner()
-next_q_halt, next_q_continue = self.inner(...)[-2]  # SECOND inner() call
-target = sigmoid(max(next_q_halt, next_q_continue))
-
-# Bug 4c final fix (correct and stable — step T):
 inner()  # writes Q-values into new_inner_carry
 target = sigmoid(max(new_inner_carry.prev_q_halt, new_inner_carry.prev_q_continue))
 ```
 
-**Why this works:**
-- `new_inner_carry.prev_q_halt` contains Q-values from AFTER `inner()` runs (step T, not T-1)
-- Values are detached (no gradient through target = stable Q-learning)
-- No second `inner()` call = `_alpha_step` increments once = alpha warmup correct
-- `prev_q` fields stay in carry = `torch.compile` happy
-- Saves ~50% training compute compared to double forward pass
+**Problem:** Step T Q-values are the SAME values as the prediction (one with gradients, one detached). The loss becomes `BCE(q_continue, sigmoid(q_continue.detach()))` — the model trains against itself. This creates a degenerate signal that pushes Q-values toward maximum uncertainty instead of learning useful halt decisions.
 
-**Evidence from wandb:** `q_continue_loss` decreases steadily with no destabilization. `lm_loss` drops to 1.35 and stays stable through all training steps tested.
+**Result:** `q_continue_loss` rose and `lm_loss` stuck at 2.0 — same broken behavior as Bug 4a despite using different Q-values.
+
+### Bug 4d: Final Fix — Double Forward Pass + Alpha Step Save/Restore
+
+**Fix:** Revert to the double forward pass (step T+1, same as original HRM) but fix the `_alpha_step` double increment by saving and restoring the counter around the second `inner()` call.
+
+```python
+# Save alpha warmup counter before second inner() call
+saved_alpha_step = self.inner._alpha_step.clone()
+
+# Run inner() a second time to get step T+1 Q-values (correct Q-learning target)
+next_q_halt, next_q_continue = self.inner(new_inner_carry, new_current_data)[-2]
+
+# Restore counter so warmup advances once per training step, not twice
+self.inner._alpha_step.copy_(saved_alpha_step)
+
+target = sigmoid(max(next_q_halt, next_q_continue))
+```
+
+**Why this works:**
+- Step T+1 Q-values come from a DIFFERENT state than the prediction — proper Q-learning
+- `_alpha_step` save/restore prevents double increment — alpha warmup takes 5000 steps as intended
+- `prev_q` fields stay in carry (written but not read) — required for `torch.compile` compatibility
+- Matches original HRM's Q-target computation exactly
+
+**Summary of all attempts:**
+```
+Bug 2 "fix":  target = Q(step T-1)  ✗ backwards
+Bug 4b:       target = Q(step T+1)  ✓ correct, but _alpha_step double increment
+Bug 4c:       target = Q(step T)    ✗ self-target (degenerate learning signal)
+Bug 4d:       target = Q(step T+1)  ✓ correct, with _alpha_step save/restore
+```
