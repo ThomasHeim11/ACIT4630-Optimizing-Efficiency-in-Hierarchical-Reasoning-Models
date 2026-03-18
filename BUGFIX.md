@@ -1,6 +1,6 @@
 # SHREK-HRM Bug Fixes and Improvements
 
-Three bugs were found and fixed, plus three stability improvements added.
+Four bugs were found and fixed, plus four stability improvements added.
 
 ---
 
@@ -14,13 +14,15 @@ Three bugs were found and fixed, plus three stability improvements added.
 
 ---
 
-## Bug 2: Q-Target Used Wrong Step (Same-Step → Previous-Step)
+## Bug 2: Q-Target Used Wrong Step (Same-Step → Previous-Step) — REVERTED IN BUG 4
 
 **Problem:** The Q-head learns "should I keep thinking or stop?" To learn this, it needs a target from the *next* state. Original HRM ran the model twice to get this. SHREK was supposed to cache Q-values from the *previous* step as a cheaper alternative (like DQN). But the code accidentally used Q-values from the *current* step — the model was chasing its own output.
 
 **Result:** `q_continue_loss` rose forever instead of decreasing. The Q-head never learned when to halt.
 
 **Fix:** Save Q-values *before* the inner forward pass, then use those saved values as the target. Now the delay works as intended.
+
+**NOTE:** This fix was itself incorrect — it made the Q-target look 1 step *backwards* (step T-1) instead of *forwards* (step T+1). See Bug 4 for the correct fix that reverts this change.
 
 ---
 
@@ -96,3 +98,33 @@ hidden_size=512, H_layers=2, L_layers=2  →  ~8M params, stable training
 **Fix:** Changed SHREK-Tiny to `hidden_size=512` (same as Large) with `H_layers=2, L_layers=2`. Same parameter count, but each token has enough representation capacity for stable training.
 
 **Inspiration:** TRM architecture design (Jolicoeur-Martineau, "Less is More: Recursive Reasoning with Tiny Networks", 2025).
+
+---
+
+## Bug 4: Q-Target Looked Backwards Instead of Forwards (Previous-Step → Double Forward Pass)
+
+**Problem:** Bug 2's "fix" introduced a worse bug. The Q-head needs to know: "what's the value of thinking *one more step*?" This requires Q-values from the *next* state (step T+1). The original HRM gets this by running `inner()` a second time (double forward pass). Bug 2's fix changed SHREK to use Q-values cached from the *previous* step (step T-1) — looking backwards instead of forwards, a 2-step discrepancy from the correct target.
+
+**How Q-learning should work:**
+```
+Original HRM:  target = Q(step T+1)  ← "what if I keep going?"     ✓ correct
+Bug 2 "fix":   target = Q(step T-1)  ← "what was it before?"       ✗ backwards
+```
+
+**Result:** `q_continue_loss` rose continuously throughout training (0.05 → 0.25 by 50k steps) because the target was nonsensical. The diverging loss sent conflicting gradients through the shared `z_H` representation, causing `lm_loss` to plateau at 2.0 (near random guessing). The model achieved only 38% per-cell accuracy on test and 0% exact puzzle accuracy.
+
+**Evidence from wandb:**
+- Before fix: `lm_loss` stuck at 2.0, `q_continue_loss` rising forever
+- After fix: `lm_loss` dropped to 1.35, `q_continue_loss` decreasing
+
+**Fix:** Reverted to the original HRM's double forward pass — run `inner()` a second time after the main forward to get next-step Q-values. This is correct Q-learning: the target represents the value of the next state. SHREK loses the "cached Q-target saves 50% compute" claim, but the model actually learns.
+
+```python
+# Before (Bug 2's broken fix — used previous step's Q-values):
+prev_step_q_halt = new_inner_carry.prev_q_halt.clone()
+target = sigmoid(max(prev_step_q_halt, prev_step_q_continue))
+
+# After (correct — same as original HRM):
+next_q_halt, next_q_continue = self.inner(new_inner_carry, new_current_data)[-2]
+target = sigmoid(max(next_q_halt, next_q_continue))
+```
