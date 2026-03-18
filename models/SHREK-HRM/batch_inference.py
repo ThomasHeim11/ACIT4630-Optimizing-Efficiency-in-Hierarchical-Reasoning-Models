@@ -116,7 +116,7 @@ def main():
                 all_equal = torch.all(equal_elements, dim=2)  # [permutes, batch_size]
 
                 # SHREK: debug prints for first batch to diagnose 0% accuracy
-                if idx == 0 and perm == 0:
+                if idx == 0:
                     per_cell = equal_elements.float().mean().item()
                     any_puzzle_correct = all_equal.any().item()
                     halt_rate = stacked_halts.float().mean().item()
