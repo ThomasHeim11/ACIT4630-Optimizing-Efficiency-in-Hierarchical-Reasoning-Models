@@ -24,5 +24,3 @@ python3 pretrain.py \
     +ema=True
 
 
-
-
