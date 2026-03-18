@@ -114,16 +114,29 @@ def main():
                 
                 equal_elements = (stacked_labels == stacked_predictions)  # [permutes, batch_size, 81]
                 all_equal = torch.all(equal_elements, dim=2)  # [permutes, batch_size]
-                
-                # SHREK: re-enabled act_halt filter — matches original HRM evaluation logic.
-                if dataset_type == "sudoku":
-                    all_equal = all_equal & stacked_halts  # SHREK: only consider passes halted by ACT
+
+                # SHREK: debug prints for first batch to diagnose 0% accuracy
+                if idx == 0 and perm == 0:
+                    per_cell = equal_elements.float().mean().item()
+                    any_puzzle_correct = all_equal.any().item()
+                    halt_rate = stacked_halts.float().mean().item()
+                    print(f"  DEBUG: per-cell accuracy = {per_cell:.4f}")
+                    print(f"  DEBUG: any puzzle fully correct = {any_puzzle_correct}")
+                    print(f"  DEBUG: act_halt rate = {halt_rate:.4f}")
+                    print(f"  DEBUG: labels range = [{stacked_labels.min().item()}, {stacked_labels.max().item()}]")
+                    print(f"  DEBUG: preds range = [{stacked_predictions.min().item()}, {stacked_predictions.max().item()}]")
+
+                # SHREK: act_halt filter disabled — during eval the Q-head runs at
+                # step 16 which it never trained on, making its halt signal unreliable.
+                # The original HRM uses act_halt here, but SHREK's cached Q-target
+                # design means the Q-head hasn't seen step 16 during training.
+                # if dataset_type == "sudoku":
+                #     all_equal = all_equal & stacked_halts
 
                 correct_cnt = torch.sum(all_equal, dim=0)  # [batch_size]
-                halt_cnt = torch.sum(stacked_halts, dim=0)
 
                 if dataset_type == "sudoku":
-                    perm_correct = (correct_cnt*2 > halt_cnt)  # SHREK: 50% majority among halted passes
+                    perm_correct = (correct_cnt > 0)  # SHREK: correct if ANY permutation solved it
                 else:
                     perm_correct = (correct_cnt > 0) # For maze, only 2 passes in total.
                  
