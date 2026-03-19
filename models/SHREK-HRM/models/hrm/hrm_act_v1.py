@@ -203,7 +203,7 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             prev_q_continue=torch.full((batch_size,), -5.0, device=self.H_init.device),
         )
         
-    def reset_carry(self, reset_flag: torch.Tensor, carry: HierarchicalReasoningModel_ACTV1InnerCarry, use_default=True):
+    def reset_carry(self, reset_flag: torch.Tensor, carry: HierarchicalReasoningModel_ACTV1InnerCarry):
         # SHREK: zero out prev_pred for reset sequences so they start fresh.
         # a reset sequence is one that just halted — it will solve a new puzzle next.
         # zeroing prev_pred means first step gives flip_rate ≈ 1.0 (maximum uncertainty).
@@ -215,26 +215,13 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         new_prev_q_halt     = torch.where(reset_flag, torch.full_like(carry.prev_q_halt,     -5.0), carry.prev_q_halt)
         new_prev_q_continue = torch.where(reset_flag, torch.full_like(carry.prev_q_continue, -5.0), carry.prev_q_continue)
 
-        if use_default:
-            return HierarchicalReasoningModel_ACTV1InnerCarry(
-                z_H=torch.where(reset_flag.view(-1, 1, 1), self.H_init, carry.z_H),
-                z_L=torch.where(reset_flag.view(-1, 1, 1), self.L_init, carry.z_L),
-                prev_pred=new_prev_pred,
-                prev_q_halt=new_prev_q_halt,
-                prev_q_continue=new_prev_q_continue,
-            )
-        else:
-            # SHREK: removed AugmentedHRM random perturbation (trunc_normal noise on reset).
-            # Random noise is replaced by error-conditioned injection in the forward pass,
-            # which gives the model informed feedback instead of a random push.
-            # Reset to clean default init — same as use_default=True.
-            return HierarchicalReasoningModel_ACTV1InnerCarry(
-                z_H=torch.where(reset_flag.view(-1, 1, 1), self.H_init, carry.z_H),
-                z_L=torch.where(reset_flag.view(-1, 1, 1), self.L_init, carry.z_L),
-                prev_pred=new_prev_pred,
-                prev_q_halt=new_prev_q_halt,
-                prev_q_continue=new_prev_q_continue,
-            )
+        return HierarchicalReasoningModel_ACTV1InnerCarry(
+            z_H=torch.where(reset_flag.view(-1, 1, 1), self.H_init, carry.z_H),
+            z_L=torch.where(reset_flag.view(-1, 1, 1), self.L_init, carry.z_L),
+            prev_pred=new_prev_pred,
+            prev_q_halt=new_prev_q_halt,
+            prev_q_continue=new_prev_q_continue,
+        )
 
 
     # SHREK: removed task_type parameter — error signal is now universal (no task rules needed)
@@ -288,7 +275,10 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         # Signal B — learned estimator: reads z_H and predicts how wrong the model is.
         #   catches stuck-but-wrong (model confidently on wrong answer without oscillating)
         #   average over content positions (skip puzzle embedding prefix positions)
-        z_H_mean    = z_H[:, self.puzzle_emb_len:].mean(dim=1)                 # (B, hidden_size)
+        #   CRITICAL: detach z_H_mean so aux_loss only trains error_estimator weights,
+        #   NOT the main reasoning layers. Without detach, aux_loss sends parasitic
+        #   gradients through z_H → H_level/L_level that conflict with lm_loss.
+        z_H_mean    = z_H[:, self.puzzle_emb_len:].mean(dim=1).detach()        # (B, hidden_size)
         learned_err = torch.sigmoid(self.error_estimator(z_H_mean.float()))    # (B, 1)
         learned_err = learned_err.squeeze(-1)                                  # (B,)
 
@@ -317,7 +307,11 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         # measure how much z_H changed compared to when this ACT step started.
         # small delta = model is stuck in the same state = stagnation signal.
         # we compute this in float32 for numerical precision, then pass to Q-head.
-        z_H_f     = z_H.float()                                                # (B, seq_len, hidden_size)
+        # CRITICAL: detach z_H before delta so Q-head loss doesn't send gradients
+        # through ALL positions of z_H via norm(). Original HRM only routes Q-head
+        # gradients through position 0 (CLS token). Without detach, delta creates
+        # a broad gradient over all 82 positions that overwhelms the lm_loss signal.
+        z_H_f     = z_H.detach().float()                                       # (B, seq_len, hidden_size)
         z_start_f = z_H_start.float()                                          # (B, seq_len, hidden_size)
         delta     = (z_H_f - z_start_f).norm(dim=(1, 2)) / \
                     (z_start_f.norm(dim=(1, 2)) + 1e-6)                        # (B,)
@@ -399,7 +393,6 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
             # Step
             new_steps = new_steps + 1
             is_last_step = new_steps >= self.config.halt_max_steps
-            # is_last_step = new_steps >= 32
             
             halted = is_last_step
 

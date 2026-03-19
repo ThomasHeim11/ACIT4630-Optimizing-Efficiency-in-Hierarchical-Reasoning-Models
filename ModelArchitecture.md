@@ -20,7 +20,7 @@ SHREK          → replaces random noise with learned error feedback
 
 ---
 
-## What SHREK Adds (Three New Components)
+## What SHREK Adds (Two New Components)
 
 ### 1. Error-Conditioned Input Injection
 
@@ -45,11 +45,12 @@ flip_rate = fraction of output tokens that changed vs previous step
 **Signal B — Learned error estimator** (catches what flip rate misses):
 
 ```
-learned_err = sigmoid(error_estimator(mean(z_H)))
+learned_err = sigmoid(error_estimator(mean(z_H).detach()))
 ```
 
-- A small neural network that reads z_H and predicts how wrong the model is
+- A small neural network that reads z_H (detached) and predicts how wrong the model is
 - Trained with an auxiliary loss: predicted error should match real loss (min-max normalized)
+- The detach ensures aux_loss only trains error_estimator weights, not the reasoning layers (see Bug 5)
 - Catches "confident but wrong" — the model stopped changing its answer but it's still incorrect
 
 **Combined:**
@@ -67,8 +68,10 @@ The error is mapped to a vector by `error_encoder` (a linear layer, `1 → hidde
 The Q-head decides "should I halt or continue thinking?" SHREK gives it extra information — a stagnation signal measuring how much `z_H` changed during this reasoning step:
 
 ```
-delta = ‖z_H_end − z_H_start‖ / (‖z_H_start‖ + ε)
+delta = ‖z_H_end.detach() − z_H_start‖ / (‖z_H_start‖ + ε)
 ```
+
+The detach ensures Q-head loss only sends gradients through position 0 (CLS token), matching HRM. Without detach, delta would route Q-head gradients through all 82 positions of z_H, drowning out lm_loss (see Bug 5).
 
 This scalar is appended to the Q-head input:
 
@@ -79,18 +82,29 @@ SHREK:  q_logits = q_head(concat(z_H[:, 0], delta))     # hidden_size+1 → 2
 
 The Q-head learns: *low delta + low error = done, halt. Low delta + high error = stuck in wrong answer, keep going.*
 
-### 3. Q-target Caching (50% Training Compute Saving)
+### Q-target (Same as HRM)
 
-In Q-learning, the Q-head needs a "target" to learn from. HRM computes this by running the full model **twice** per training step — once for the actual output, and once just to get next-step Q-values for the target. This doubles training compute.
-
-SHREK removes the second forward pass. Instead, it caches the Q-values from each step in the carry state. At the next ACT step, the cached Q-values from the **previous** step are used as the target — a 1-step delayed target, similar to how DQN (Deep Q-Network) uses a delayed target network for stable training.
+SHREK uses the same Q-target computation as the original HRM — a double forward pass. `inner()` runs a second time inside `torch.no_grad()` to get step T+1 Q-values:
 
 ```
-HRM:    target = sigmoid(Q_values from second forward pass)     # expensive
-SHREK:  target = sigmoid(Q_values cached from previous step)    # free
+target = sigmoid(max(Q_halt(step T+1), Q_continue(step T+1)))
 ```
 
-This saves ~50% training compute with no cost at inference time.
+The `_alpha_step` warmup counter is saved and restored around this call to prevent double-incrementing (see Bug 4d in BUGFIX.md). An earlier approach cached Q-values in the carry for a 50% compute saving, but this produced degenerate Q-targets (see Bug 4 in BUGFIX.md).
+
+---
+
+## What's Identical to HRM
+
+Everything structural is inherited unchanged:
+
+- **Reasoning loop**: H_cycles × L_cycles iterations, `no_grad` except last step (1-step gradient trick)
+- **Block architecture**: Attention + SwiGLU + RMSNorm (post-norm), non-causal
+- **Token decoding**: `lm_head(z_H)` skipping puzzle embedding prefix
+- **Q-target**: Double forward pass for step T+1 Q-values
+- **ACT halt logic**: `q_halt > q_continue` with exploration
+- **Gradient structure**: `lm_loss` trains all positions of z_H, Q-losses train position 0 only
+- **Reset**: Halted sequences reset to learned `H_init`/`L_init` (SHREK removed AugmentedHRM's random noise on reset — error injection replaces it)
 
 ---
 
@@ -98,21 +112,23 @@ This saves ~50% training compute with no cost at inference time.
 
 ```
 1. Reset carry for halted sequences (clean initial state)
-2. Save previous step's cached Q-values (for delayed Q-target)
-3. Inner reasoning loop (with gradient on last step only):
+2. Inner reasoning loop (with gradient on last step only):
      for each H-step:
          for each L-step:
              z_L = L_level(z_L, z_H + input_embeddings)
          z_H = H_level(z_H, z_L)
-4. Decode output: logits = lm_head(z_H)
-5. Compute error signal (flip rate + learned estimator)
-6. Inject error into z_H:  z_H = z_H + alpha × error_encoder(error) / sqrt(hidden_size)
-7. Compute stagnation delta from z_H change
-8. ACT halt decision: q_head(concat(z_H[:,0], delta)) → halt or continue
+3. Decode output: logits = lm_head(z_H)
+4. Compute error signal (flip rate + learned estimator, both detached from z_H)
+5. Inject error into z_H:  z_H = z_H + alpha × error_encoder(error) / sqrt(hidden_size)
+6. Compute stagnation delta from z_H change (detached from z_H)
+7. ACT halt decision: q_head(concat(z_H[:,0], delta)) → halt or continue
+8. Double forward pass for Q-target: run inner() again to get step T+1 Q-values
 9. Store z_H and Q-values in carry for next step
 ```
 
-Steps 5-6 happen AFTER the inner loop — the error injection modifies z_H for the next ACT step, not the current one's output.
+Steps 4-5 happen AFTER the inner loop — the error injection modifies z_H for the next ACT step, not the current one's output.
+
+**Gradient isolation:** The error estimator input (`z_H_mean`) and the stagnation delta (`z_H_f`) are both detached from `z_H` before use. This ensures that only `lm_loss` sends gradients through the reasoning layers (`H_level`/`L_level`). Without detaching, the auxiliary loss and Q-head loss would send parasitic gradients through `z_H` that conflict with the main language modeling objective. See Bug 5 in BUGFIX.md.
 
 ---
 

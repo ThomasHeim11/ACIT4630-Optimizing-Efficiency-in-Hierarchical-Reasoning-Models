@@ -1,6 +1,6 @@
 # SHREK-HRM Bug Fixes and Improvements
 
-Four bugs were found and fixed, plus four stability improvements added. Bug 4 went through multiple iterations before arriving at the final solution (Bug 4c).
+Five bugs were found and fixed, plus four stability improvements added. Bug 4 went through multiple iterations before arriving at the final solution (Bug 4d).
 
 ---
 
@@ -174,3 +174,40 @@ Bug 4b:       target = Q(step T+1)  ✓ correct, but _alpha_step double incremen
 Bug 4c:       target = Q(step T)    ✗ self-target (degenerate learning signal)
 Bug 4d:       target = Q(step T+1)  ✓ correct, with _alpha_step save/restore
 ```
+
+---
+
+## Bug 5: Parasitic Gradient Leakage Through z_H (Two Paths)
+
+**Problem:** After fixing Bugs 1-4, SHREK-HRM was stuck at ~54% token accuracy / 0% exact accuracy after 50k+ training steps. The original AugmentedHRM solves sudoku with the same architecture. Root cause: two gradient paths leaked conflicting optimization signals into the reasoning layers (`H_level`/`L_level`), preventing the model from learning beyond basic cell copying.
+
+### Path A: `aux_loss` → `error_estimator` → `z_H` → reasoning layers
+
+The error estimator reads `z_H_mean = z_H[:, puzzle_emb_len:].mean(dim=1)` and predicts how wrong the model is. Its auxiliary loss trains the estimator to match real `lm_loss`. But because `z_H_mean` was not detached, gradients from `aux_loss` flowed backwards through `z_H` into `H_level` and `L_level`. This told the reasoning layers "predict your own loss" instead of "predict correct tokens" — a parasitic objective that conflicted with `lm_loss`.
+
+**Fix:** Detach `z_H_mean` before the error estimator:
+```python
+z_H_mean = z_H[:, self.puzzle_emb_len:].mean(dim=1).detach()
+```
+
+`aux_loss` still trains the `error_estimator` weights — it just can't corrupt the main model anymore.
+
+### Path B: `q_halt_loss` → stagnation `delta` → `z_H` → reasoning layers
+
+The stagnation delta measures how much `z_H` changed during the current reasoning step: `delta = norm(z_H_end - z_H_start) / norm(z_H_start)`. This delta is fed to the Q-head, and Q-head loss backpropagates through it. Because `z_H` was not detached before computing delta, Q-head gradients flowed through `norm()` over ALL 82 positions of `z_H`. The original HRM only sends Q-head gradients through position 0 (CLS token). This 82x gradient amplification drowned out the `lm_loss` signal.
+
+**Fix:** Detach `z_H` before computing stagnation delta:
+```python
+z_H_f = z_H.detach().float()
+```
+
+Delta remains an informational-only input to the Q-head — it can read the stagnation signal but can't push gradients back through it.
+
+### Why both paths matter
+
+Either path alone is enough to stall training. Path A pulls reasoning layers toward "predict loss" instead of "predict tokens". Path B amplifies Q-head gradients 82x over the correct amount. Together they created a gradient soup where `lm_loss` couldn't make progress. With both paths detached, `lm_loss` is the only signal reaching `H_level`/`L_level` — matching the original HRM's gradient structure exactly.
+
+### Dead code cleanup (same commit)
+
+- Removed `use_default` parameter and duplicate else branch from `reset_carry` — both branches were identical, parameter was never passed as `False`.
+- Removed commented-out debug line `# is_last_step = new_steps >= 32`.
