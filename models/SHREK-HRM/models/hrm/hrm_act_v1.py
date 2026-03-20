@@ -124,9 +124,8 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
 
         self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.vocab_size, bias=False)
-        # SHREK: q_head takes hidden_size + 1 because we append the stagnation delta scalar
-        # (stagnation delta = how much z_H changed this step — tells the halt decision if the model is stuck)
-        self.q_head       = CastedLinear(self.config.hidden_size + 1, 2, bias=True)
+        # Q-head: same as original HRM — reads CLS token (position 0) only
+        self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True)
 
         # SHREK: error_encoder maps the scalar error score -> hidden_size vector for injection into z_H
         # alpha follows a linear warmup schedule (0 → alpha_max over warmup steps).
@@ -236,11 +235,6 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
 
         z_H_trace = []
 
-        # SHREK: store z_H from the START of this ACT step to compute stagnation delta later.
-        # stagnation delta = how much z_H changed during this full reasoning step.
-        # if z_H barely changed, the model is stuck and the Q-head should know that.
-        z_H_start = carry.z_H
-
         # Forward iterations
         with torch.no_grad():
             z_H, z_L = carry.z_H, carry.z_L
@@ -287,7 +281,11 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         # learned_err becomes accurate over training and takes over as the stronger signal
         error = 0.5 * flip_err + 0.5 * learned_err                            # (B,)
 
-        # SHREK: inject combined error into z_H
+        # Q head: same as original HRM — reads CLS token (position 0) before error injection.
+        # This keeps Q-learning stable by matching HRM's gradient structure exactly.
+        q_logits  = self.q_head(z_H[:, 0].to(torch.float32)).to(torch.float32) # (B, 2)
+
+        # SHREK: inject combined error into z_H (AFTER Q-head, only affects carry for next step)
         # error_encoder maps scalar -> hidden_size vector
         # alpha follows linear warmup: 0 → alpha_max over warmup steps
         # scaled by 1/sqrt(hidden_size) so injection is proportional to model size
@@ -302,26 +300,6 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             alpha = self.config.alpha_max * torch.clamp(self._alpha_step / self.config.alpha_warmup_steps, max=1.0)
         scale = math.sqrt(self.config.hidden_size)
         z_H = z_H + (alpha * error_emb.unsqueeze(1) / scale).to(z_H.dtype)   # (B, seq_len, hidden_size)
-
-        # SHREK Component 2: Stagnation Delta for Q-head
-        # measure how much z_H changed compared to when this ACT step started.
-        # small delta = model is stuck in the same state = stagnation signal.
-        # we compute this in float32 for numerical precision, then pass to Q-head.
-        # CRITICAL: detach z_H before delta so Q-head loss doesn't send gradients
-        # through ALL positions of z_H via norm(). Original HRM only routes Q-head
-        # gradients through position 0 (CLS token). Without detach, delta creates
-        # a broad gradient over all 82 positions that overwhelms the lm_loss signal.
-        z_H_f     = z_H.detach().float()                                       # (B, seq_len, hidden_size)
-        z_start_f = z_H_start.float()                                          # (B, seq_len, hidden_size)
-        delta     = (z_H_f - z_start_f).norm(dim=(1, 2)) / \
-                    (z_start_f.norm(dim=(1, 2)) + 1e-6)                        # (B,)
-
-        # Q head: append stagnation delta to the CLS token before the halt decision.
-        # CLS token (position 0) summarises the full sequence state.
-        # delta tells the Q-head "I moved this much — am I still making progress?"
-        cls_token = z_H[:, 0].to(torch.float32)                                # (B, hidden_size)
-        q_input   = torch.cat([cls_token, delta.unsqueeze(-1)], dim=-1)        # (B, hidden_size + 1)
-        q_logits  = self.q_head(q_input).to(torch.float32)                     # (B, 2)
 
         # New carry: store error-injected z_H so next ACT step starts from it
         new_carry = HierarchicalReasoningModel_ACTV1InnerCarry(
