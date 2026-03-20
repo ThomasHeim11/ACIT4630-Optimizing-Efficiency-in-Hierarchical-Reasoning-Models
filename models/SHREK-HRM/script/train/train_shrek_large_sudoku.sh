@@ -16,6 +16,7 @@ python3 pretrain.py \
     data_path=../../dataset/data/sudoku-extreme-1k-aug-1000-hint \
     epochs=40000 \
     eval_interval=1000 \
+    global_batch_size=384 \
     +ema=True \
     +run_name=SHREK_Large_Sudoku
 
