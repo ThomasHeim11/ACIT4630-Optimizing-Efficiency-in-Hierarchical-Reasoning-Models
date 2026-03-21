@@ -15,7 +15,8 @@ python3 pretrain.py \
     data_path=../../dataset/data/sudoku-extreme-1k-aug-1000-hint \
     epochs=40000 \
     eval_interval=1000 \
-    lr=1e-4 \
-    puzzle_emb_lr=1e-4 \
+    global_batch_size=384 \
+    lr=7e-5 \
+    puzzle_emb_lr=7e-5 \
     weight_decay=1.0 \
     puzzle_emb_weight_decay=1.0
