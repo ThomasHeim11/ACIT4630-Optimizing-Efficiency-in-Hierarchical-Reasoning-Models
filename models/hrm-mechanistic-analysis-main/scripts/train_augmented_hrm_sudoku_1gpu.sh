@@ -19,6 +19,4 @@ DISABLE_COMPILE=1 OMP_NUM_THREADS=8 python3 pretrain.py \
     lr=7e-5 \
     puzzle_emb_lr=7e-5 \
     weight_decay=1.0 \
-    puzzle_emb_weight_decay=1.0 \
-    +run_name=Augmented_HRM_Sudoku \
-    +project_name=HRM_Sudoku_Comparison
+    puzzle_emb_weight_decay=1.0
