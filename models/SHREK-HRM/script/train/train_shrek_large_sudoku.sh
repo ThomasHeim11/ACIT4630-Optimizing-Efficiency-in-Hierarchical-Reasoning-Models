@@ -22,6 +22,7 @@ DISABLE_COMPILE=1 OMP_NUM_THREADS=8 python3 pretrain.py \
     weight_decay=1.0 \
     puzzle_emb_weight_decay=1.0 \
     +ema=True \
-    +run_name=SHREK_Large_Sudoku
+    +run_name=SHREK_Large_Sudoku \
+    +project_name=HRM_Sudoku_Comparison
 
 
