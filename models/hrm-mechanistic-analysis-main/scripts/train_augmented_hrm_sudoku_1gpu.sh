@@ -11,12 +11,12 @@ module load cuda12.6/toolkit/12.6.3
 
 cd ~/HMR/models/hrm-mechanistic-analysis-main
 
-DISABLE_COMPILE=1 OMP_NUM_THREADS=8 python3 pretrain.py \
+OMP_NUM_THREADS=8 python3 pretrain.py \
     data_path=../../dataset/data/sudoku-extreme-1k-aug-1000-hint \
     epochs=40000 \
     eval_interval=1000 \
-    global_batch_size=384 \
-    lr=7e-5 \
-    puzzle_emb_lr=7e-5 \
+    global_batch_size=768 \
+    lr=1e-4 \
+    puzzle_emb_lr=1e-4 \
     weight_decay=1.0 \
     puzzle_emb_weight_decay=1.0

@@ -11,7 +11,7 @@ module load cuda12.6/toolkit/12.6.3
 
 cd ~/HMR/models/HRM\(Original\)/HRM-main
 
-DISABLE_COMPILE=1 OMP_NUM_THREADS=8 python3 pretrain.py \
+OMP_NUM_THREADS=8 python3 pretrain.py \
     data_path=../../../dataset/data/sudoku-extreme-1k-aug-1000 \
     epochs=20000 \
     eval_interval=1000 \
