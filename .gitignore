@@ -49,10 +49,11 @@ multirun/
 .vscode/
 *.code-workspace
 
+
 # Kaggle credentials - never commit!
 kaggle.json
 .kaggle/
-
+.claude 
 # Hydra outputs
 outputs/
 multirun/

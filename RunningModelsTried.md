@@ -97,29 +97,60 @@ Paper targets: Original HRM ~55% test exact accuracy, Augmented HRM ~60% single 
 
 ## Key Lessons Learned
 
-1. **Original HRM codebase cannot train on 1 GPU** — tried twice (lr=1e-4 and lr=7e-5), both diverged. Lacks divergence scheduling mask.
-2. **Augmented HRM codebase is more stable** — divergence scheduling prevents total collapse, but Q-learning still drifts.
-3. **lr=1e-4 + batch=768 > lr=7e-5 + batch=384** — giga-moose (1e-4/768) had spiking exact_accuracy; automatic-harrier (7e-5/384) had 0%. Larger batch smooths Q-learning gradients.
-4. **Don't kill promising runs early** — giga-moose was the best run but was killed at step 11718 out of concern about q_continue_loss.
-5. **Per-cell accuracy != puzzle-solving** — 55% per-cell accuracy means 0% exact puzzle accuracy. The model needs much higher per-cell accuracy to solve full puzzles.
-6. **torch.compile matters for speed** — DISABLE_COMPILE=1 was used in all runs. Removing it should speed up training.
+1. **CRITICAL: The adam_atan2 optimizer was broken in ALL previous runs.** Our pure-Python patch applied weight decay to the gradient (`grad.add(p, alpha=wd)`) instead of directly to parameters (`p.mul_(1 - lr * wd)`). This warped the atan2 update computation. Fixed on 2026-03-24 by using the real `adam-atan2-pytorch` v0.2.8 via import shim.
+2. **Original HRM codebase could not train on 1 GPU** — tried twice (lr=1e-4 and lr=7e-5), both diverged. But this was with the broken optimizer.
+3. **Augmented HRM codebase is more stable** — divergence scheduling prevents total collapse, but Q-learning still drifts with broken optimizer.
+4. **Don't kill promising runs early** — giga-moose was killed at step 11718 out of concern about q_continue_loss.
+5. **Per-cell accuracy != puzzle-solving** — 55% per-cell accuracy means 0% exact puzzle accuracy.
+6. **v0.0.3 of adam-atan2 requires C++ CUDA backend** that won't compile on our cluster. v0.2.8 (pure Python) works but has `assert lr > 0` — fixed with `lr=1e-7` placeholder in pretrain.py (scheduler overwrites immediately).
+
+---
+
+## Run 5: Original HRM — `liberal-bee` (RUNNING)
+
+| Parameter | Value |
+|---|---|
+| Codebase | HRM-main (Original) |
+| Dataset | sudoku-extreme-1k-aug-1000 (vanilla) |
+| lr | 7e-5 |
+| global_batch_size | 384 |
+| epochs | 20000 |
+| Optimizer | **adam-atan2-pytorch v0.2.8 (FIXED)** |
+| torch.compile | enabled |
+
+**Status:** Running on gh001, job 997039. First run with correct optimizer.
+
+---
+
+## Run 6: Augmented HRM — `hopeful-quetzal` (RUNNING)
+
+| Parameter | Value |
+|---|---|
+| Codebase | hrm-mechanistic-analysis-main (Augmented) |
+| Dataset | sudoku-extreme-1k-aug-1000-hint |
+| lr | 1e-4 |
+| global_batch_size | 768 |
+| epochs | 40000 |
+| Optimizer | **adam-atan2-pytorch v0.2.8 (FIXED)** |
+| torch.compile | enabled |
+
+**Status:** Running on gh002, job 997040. First run with correct optimizer.
+
+---
+
+## Optimizer Fix Summary
+
+| | Old (broken patch) | New (v0.2.8 via shim) |
+|---|---|---|
+| Weight decay | `grad.add(p, alpha=wd)` (injected into gradient) | `p.mul_(1 - lr * wd)` (applied to params directly) |
+| Bias correction | None | Yes (`1 - beta^t`) |
+| Update scaling | `atan2(m, sqrt(v))` | `atan2(m/bc1, sqrt(v/bc2)) * a` where a=1.27 |
+| Source | Our reimplementation | Real lucidrains library |
 
 ---
 
 ## What Has NOT Been Tried Yet
 
-1. **Vanilla dataset through Augmented HRM codebase** — uses divergence scheduling for stable training of the Original HRM baseline
-2. **lr=1e-4 + batch=768 with Augmented HRM running to completion** — giga-moose was killed early; needs full run
-3. **torch.compile enabled** — all runs used DISABLE_COMPILE=1
-4. **Multi-node training (2 GPUs across gh001 + gh002)** — cluster has 1 GPU per node, would need multi-node torchrun
-5. **Lower lr (5e-5)** — fallback option from plan, never attempted
-6. **Evaluating giga-moose checkpoints** — only has steps up to 11718, probably too early
-
----
-
-## Next Planned Runs
-
-Both using Augmented HRM codebase, lr=1e-4, batch=768, torch.compile enabled:
-
-1. **Original HRM baseline**: vanilla dataset, 20k epochs
-2. **Augmented HRM**: hint dataset, 40k epochs
+1. **Multi-node training (2 GPUs across gh001 + gh002)** — cluster has 1 GPU per node
+2. **Lower lr (5e-5)** — fallback if current runs fail
+3. **Vanilla dataset through Augmented HRM codebase** — fallback option
