@@ -152,7 +152,7 @@ def create_model(config: PretrainConfig, train_metadata: PuzzleDatasetMetadata, 
         AdamATan2(
             model.parameters(),
 
-            lr=0,  # Needs to be set by scheduler
+            lr=1e-7,  # Placeholder; overwritten by scheduler
             weight_decay=config.weight_decay,
             betas=(config.beta1, config.beta2)
         )
