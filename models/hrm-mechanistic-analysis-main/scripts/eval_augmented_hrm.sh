@@ -11,6 +11,6 @@ module load cuda12.6/toolkit/12.6.3
 
 cd ~/HMR/models/hrm-mechanistic-analysis-main
 
-CKPTS=$(python3 -c "prefix='checkpoints/Sudoku-extreme-1k-aug-1000-hint ACT-torch/HierarchicalReasoningModel_ACTV1 hopeful-quetzal/step_'; steps=[42966,44268,45570,46872,48174,49476,50778,52080,40362,41664]; print(','.join([f'{prefix}{s}' for s in steps]))")
+CKPTS=$(python3 -c "prefix='checkpoints/Sudoku-extreme-1k-aug-1000-hint ACT-torch/HierarchicalReasoningModel_ACTV1 hopeful-quetzal/step_'; print(','.join([f'{prefix}{i*1302}' for i in range(31, 41)]))")
 
 DISABLE_COMPILE=1 PYTHONUNBUFFERED=1 python3 batch_inference.py --checkpoints "$CKPTS" --permutes 9 --num_batch 10 --batch_size 100
