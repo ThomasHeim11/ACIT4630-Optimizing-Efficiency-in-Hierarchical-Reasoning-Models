@@ -9,6 +9,9 @@ Results: 0.53 % accuracy,that's within the paper's 55% (±2%) target
 
 ### Augmented HRM
 
+![alt text](image-5.png)
+![alt text](image-4.png)
+
 ### Shrek HRM
 
 ![alt text](image-2.png)
