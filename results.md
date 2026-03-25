@@ -12,6 +12,7 @@ Results: 0.53 % accuracy,that's within the paper's 55% (±2%) target
 ### Shrek HRM
 
 ![alt text](image-2.png)
+![alt text](image-3.png)
 
 #### Maze Hard (1k)
 
