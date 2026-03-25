@@ -11,17 +11,16 @@ module load cuda12.6/toolkit/12.6.3
 
 cd ~/HMR/models/SHREK-HRM
 
-python3 pretrain.py \
+OMP_NUM_THREADS=8 python3 pretrain.py \
     arch=shrek_tiny \
     data_path=../../dataset/data/maze-30x30-hard-1k \
-    epochs=40000 \
+    epochs=20000 \
     eval_interval=1000 \
+    global_batch_size=768 \
     lr=1e-4 \
     puzzle_emb_lr=1e-4 \
     weight_decay=1.0 \
     puzzle_emb_weight_decay=1.0 \
-    +run_name=shrek-tiny-maze \
+    +run_name=SHREK_Tiny_Maze \
+    +project_name=HRM_Maze_Comparison \
     +ema=True
-
-
-
