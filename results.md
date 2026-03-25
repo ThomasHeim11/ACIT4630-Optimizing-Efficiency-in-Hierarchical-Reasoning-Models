@@ -19,7 +19,7 @@ Results: 0.53 % accuracy,that's within the paper's 55% (±2%) target
 
 #### General results
 
-HREK Large gets 70.6% without any tricks — the Augmented HRM needs 10 checkpoints + 9 permutations just to
+SHREK Large gets 70.6% without any tricks — the Augmented HRM needs 10 checkpoints + 9 permutations just to
 Reach 89.3%. This means:
 
 - SHREK is a better standalone model — deploy one checkpoint, get 70.6%

@@ -27,4 +27,5 @@ OMP_NUM_THREADS=8 python3 pretrain.py \
     arch.H_cycles=3 \
     arch.L_cycles=6 \
     +run_name=TRM_MLP_Sudoku \
+    +project_name=HRM_Sudoku_Comparison \
     ema=True
