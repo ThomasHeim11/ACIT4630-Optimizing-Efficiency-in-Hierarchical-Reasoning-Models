@@ -204,7 +204,7 @@ Check:
 
 ### TODO FRA 26.mars (gjøres etter mastermøte)
 
+- Upload TRM sudoku checkpoints to hugging face.✅
+- Remove old SHREK checpoints before new getting the new checpoints.
+- Upload all the checkpoints for SHREK-large and mini for the sudoku and maze dataset.
 - Update dataset HuggingFace: Upload current version form local to hugging face
-- Upload TRM sudoku checkpoints to hugging face.
-- Upload all the checkpoints for MazeHard for SHREK HRM, TRM, HRM, Augment-HRM
-- Upload all checkpoints for Sudoku extreme for
