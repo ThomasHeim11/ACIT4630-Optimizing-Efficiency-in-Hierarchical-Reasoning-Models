@@ -36,6 +36,7 @@ someone's elbow hoping they write something different. It is blind. Sometimes it
    Feeds this into the halt decision: "am I still making progress, or just spinning?"
 
 **Two sizes — same design:**
+
 - SHREK-Large (27M parameters) — competes with HRM and AugmentedHRM
 - SHREK-Tiny (7M parameters) — competes with the Tiny Recursive Model, 4x cheaper to run
 
@@ -49,10 +50,10 @@ We fixed this by storing that number from the previous step instead. Halves trai
 
 Two models. Same architecture. Different sizes.
 
-| Model | Params | hidden_size | num_heads |
-|---|---|---|---|
-| SHREK-Large | ~27M | 512 | 8 |
-| SHREK-Tiny  | ~7M  | 256 | 4 |
+| Model       | Params | hidden_size | num_heads |
+| ----------- | ------ | ----------- | --------- |
+| SHREK-Large | ~27M   | 512         | 8         |
+| SHREK-Tiny  | ~7M    | 256         | 4         |
 
 One codebase. Two config YAML files. Nothing else changes.
 
@@ -60,18 +61,18 @@ One codebase. Two config YAML files. Nothing else changes.
 
 ## SHREK Components
 
-| Component | What it does | Why |
-|---|---|---|
-| Learned error estimator | Reads z_H → predicts how wrong model is | Catches stuck-but-wrong |
-| Flip rate | Fraction of tokens that changed from last step | Catches oscillating predictions |
-| Combined error = 0.5 × each | One signal per puzzle per step | Covers all failure modes |
-| Error injection | z_H += alpha × error_encoder(error) | Pushes model out of bad states |
-| Alpha gate [0,1] | Learned scale, starts 0.01 | Safe — won't destabilize training |
-| Stagnation delta | How much z_H moved this step | Tells Q-head: stuck vs converged |
-| Q-head with delta | [CLS token, delta] → halt or continue | Better halt decisions |
-| No random perturbation | Clean reset instead of noise | Error injection replaces this |
-| Q-target caching | Store prev Q in carry, remove second inner() call | Cuts training compute ~50% |
-| Auxiliary loss | Trains error estimator to predict real loss | Makes estimator accurate |
+| Component                   | What it does                                      | Why                               |
+| --------------------------- | ------------------------------------------------- | --------------------------------- |
+| Learned error estimator     | Reads z_H → predicts how wrong model is           | Catches stuck-but-wrong           |
+| Flip rate                   | Fraction of tokens that changed from last step    | Catches oscillating predictions   |
+| Combined error = 0.5 × each | One signal per puzzle per step                    | Covers all failure modes          |
+| Error injection             | z_H += alpha × error_encoder(error)               | Pushes model out of bad states    |
+| Alpha gate [0,1]            | Learned scale, starts 0.01                        | Safe — won't destabilize training |
+| Stagnation delta            | How much z_H moved this step                      | Tells Q-head: stuck vs converged  |
+| Q-head with delta           | [CLS token, delta] → halt or continue             | Better halt decisions             |
+| No random perturbation      | Clean reset instead of noise                      | Error injection replaces this     |
+| Q-target caching            | Store prev Q in carry, remove second inner() call | Cuts training compute ~50%        |
+| Auxiliary loss              | Trains error estimator to predict real loss       | Makes estimator accurate          |
 
 ---
 
@@ -169,6 +170,7 @@ python3 pretrain.py arch=shrek_tiny data_path=data/sudoku-extreme-full epochs=2 
 ```
 
 Check:
+
 - [ ] Loss goes down (not NaN)
 - [ ] `alpha` stays between 0 and 1
 - [ ] `aux_loss` decreases — error estimator is learning
@@ -180,22 +182,29 @@ Check:
 
 ## Benchmark comparison
 
-| Model | Params | FLOPs/step | Gets stuck? | Universal? |
-|---|---|---|---|---|
-| HRM | 27M | large | Yes | Yes |
-| AugmentedHRM | 27M | large | Sometimes | Yes |
-| Tiny Recursive | ~7M | small | Yes | Yes |
-| SHREK-Large | 27M | large | No | Yes |
-| SHREK-Tiny | ~7M | small | No | Yes |
+| Model          | Params | FLOPs/step | Gets stuck? | Universal? |
+| -------------- | ------ | ---------- | ----------- | ---------- |
+| HRM            | 27M    | large      | Yes         | Yes        |
+| AugmentedHRM   | 27M    | large      | Sometimes   | Yes        |
+| Tiny Recursive | ~7M    | small      | Yes         | Yes        |
+| SHREK-Large    | 27M    | large      | No          | Yes        |
+| SHREK-Tiny     | ~7M    | small      | No          | Yes        |
 
 ---
 
 ## File Checklist
 
-| File | Action | Status |
-|---|---|---|
+| File                                          | Action                   | Status  |
+| --------------------------------------------- | ------------------------ | ------- |
 | `models/OurMODEL/models/hrm/error_singals.py` | Rewrite — flip rate only | ✅ Done |
-| `models/OurMODEL/models/hrm/hrm_act_v1.py` | Steps 3a–3h | ✅ Done |
-| `models/OurMODEL/pretrain.py` | Step 4 | ✅ Done |
-| `config/arch/shrek_large.yaml` | Create | ✅ Done |
-| `config/arch/shrek_tiny.yaml` | Create | ✅ Done |
+| `models/OurMODEL/models/hrm/hrm_act_v1.py`    | Steps 3a–3h              | ✅ Done |
+| `models/OurMODEL/pretrain.py`                 | Step 4                   | ✅ Done |
+| `config/arch/shrek_large.yaml`                | Create                   | ✅ Done |
+| `config/arch/shrek_tiny.yaml`                 | Create                   | ✅ Done |
+
+### TODO FRA 26.mars (gjøres etter mastermøte)
+
+- Update dataset HuggingFace: Upload current version form local to hugging face
+- Upload TRM sudoku checkpoints to hugging face.
+- Upload all the checkpoints for MazeHard for SHREK HRM, TRM, HRM, Augment-HRM
+- Upload all checkpoints for Sudoku extreme for

@@ -67,6 +67,10 @@ class HierarchicalReasoningModel_ACTV1Config(BaseModel):
     alpha_max: float = 0.01
     alpha_warmup_steps: int = 5000
 
+    # SHREK ablation flags — disable components from training scripts
+    enable_error_injection: bool = True    # Error-Conditioned Injection (flip rate + learned estimator)
+    enable_stagnation_delta: bool = True   # Stagnation-Aware Q-head (delta fed to Q-head)
+
     forward_dtype: str = "bfloat16"
 
 
@@ -124,8 +128,9 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
 
         self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.vocab_size, bias=False)
-        # Q-head: same as original HRM — reads CLS token (position 0) only
-        self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True)
+        # SHREK: Q-head input size depends on stagnation delta flag
+        q_head_input_size = self.config.hidden_size + (1 if self.config.enable_stagnation_delta else 0)
+        self.q_head       = CastedLinear(q_head_input_size, 2, bias=True)
 
         # SHREK: error_encoder maps the scalar error score -> hidden_size vector for injection into z_H
         # alpha follows a linear warmup schedule (0 → alpha_max over warmup steps).
@@ -281,25 +286,40 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         # learned_err becomes accurate over training and takes over as the stronger signal
         error = 0.5 * flip_err + 0.5 * learned_err                            # (B,)
 
-        # Q head: same as original HRM — reads CLS token (position 0) before error injection.
-        # This keeps Q-learning stable by matching HRM's gradient structure exactly.
-        q_logits  = self.q_head(z_H[:, 0].to(torch.float32)).to(torch.float32) # (B, 2)
+        # SHREK Component 2: Stagnation-Aware Q-head
+        # Ablation: can be disabled via config.enable_stagnation_delta=False
+        if self.config.enable_stagnation_delta:
+            # Compute how much z_H changed during this reasoning step.
+            # CRITICAL: detach so Q-head gradients don't flow through all positions of z_H.
+            # Without detach, Q-head loss would route gradients through all 82 positions,
+            # drowning out lm_loss. With detach, Q-head gradients only flow through position 0.
+            z_H_f = z_H.detach().float()
+            z_H_start = carry.z_H.detach().float()
+            delta = torch.norm(z_H_f - z_H_start, dim=(1, 2)) / (torch.norm(z_H_start, dim=(1, 2)) + 1e-6)  # (B,)
+            # Q-head reads CLS token + stagnation delta
+            q_input = torch.cat([z_H[:, 0].to(torch.float32), delta.unsqueeze(-1)], dim=-1)  # (B, hidden_size+1)
+        else:
+            # Fallback: same as original HRM — Q-head reads CLS token only
+            q_input = z_H[:, 0].to(torch.float32)  # (B, hidden_size)
+        q_logits = self.q_head(q_input).to(torch.float32)  # (B, 2)
 
         # SHREK: inject combined error into z_H (AFTER Q-head, only affects carry for next step)
-        # error_encoder maps scalar -> hidden_size vector
-        # alpha follows linear warmup: 0 → alpha_max over warmup steps
-        # scaled by 1/sqrt(hidden_size) so injection is proportional to model size
-        error_emb = self.error_encoder(error.unsqueeze(-1))                    # (B, hidden_size)
-        # SHREK: compute alpha from warmup schedule (not learned)
-        # During warmup, alpha ramps linearly from 0 to alpha_max.
-        # After warmup, alpha stays at alpha_max.
-        # Uses torch.clamp instead of Python min() to stay compatible with torch.compile.
-        with torch.no_grad():
-            if self.training:
-                self._alpha_step += 1
-            alpha = self.config.alpha_max * torch.clamp(self._alpha_step / self.config.alpha_warmup_steps, max=1.0)
-        scale = math.sqrt(self.config.hidden_size)
-        z_H = z_H + (alpha * error_emb.unsqueeze(1) / scale).to(z_H.dtype)   # (B, seq_len, hidden_size)
+        # Ablation: can be disabled via config.enable_error_injection=False
+        if self.config.enable_error_injection:
+            # error_encoder maps scalar -> hidden_size vector
+            # alpha follows linear warmup: 0 → alpha_max over warmup steps
+            # scaled by 1/sqrt(hidden_size) so injection is proportional to model size
+            error_emb = self.error_encoder(error.unsqueeze(-1))                    # (B, hidden_size)
+            # SHREK: compute alpha from warmup schedule (not learned)
+            # During warmup, alpha ramps linearly from 0 to alpha_max.
+            # After warmup, alpha stays at alpha_max.
+            # Uses torch.clamp instead of Python min() to stay compatible with torch.compile.
+            with torch.no_grad():
+                if self.training:
+                    self._alpha_step += 1
+                alpha = self.config.alpha_max * torch.clamp(self._alpha_step / self.config.alpha_warmup_steps, max=1.0)
+            scale = math.sqrt(self.config.hidden_size)
+            z_H = z_H + (alpha * error_emb.unsqueeze(1) / scale).to(z_H.dtype)   # (B, seq_len, hidden_size)
 
         # New carry: store error-injected z_H so next ACT step starts from it
         new_carry = HierarchicalReasoningModel_ACTV1InnerCarry(
