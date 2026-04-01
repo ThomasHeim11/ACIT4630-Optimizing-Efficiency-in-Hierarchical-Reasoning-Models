@@ -128,8 +128,8 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
 
         self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.vocab_size, bias=False)
-        # SHREK: Q-head input size depends on stagnation delta flag
-        q_head_input_size = self.config.hidden_size + (1 if self.config.enable_stagnation_delta else 0)
+        # SHREK: Q-head input size depends on error-guided halting flag
+        q_head_input_size = self.config.hidden_size + (1 if self.config.enable_error_halting else 0)
         self.q_head       = CastedLinear(q_head_input_size, 2, bias=True)
 
         # SHREK: error_encoder maps the scalar error score -> hidden_size vector for injection into z_H
