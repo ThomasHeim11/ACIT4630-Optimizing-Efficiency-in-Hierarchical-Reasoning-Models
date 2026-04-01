@@ -24,5 +24,5 @@ OMP_NUM_THREADS=8 python3 pretrain.py \
     arch.enable_error_injection=True \
     arch.enable_error_halting=True \
     +ema=True \
-    +run_name=Ablation_Full \
+    +run_name=Ablation_Full_v2 \
     +project_name=SHREK_Ablation_Sudoku
