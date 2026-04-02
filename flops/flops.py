@@ -174,6 +174,7 @@ def run_measure(args):
             # Forward loop with FLOPs counting
             flop_counter = FlopCounterMode(display=False)
             step = 0
+            metrics = None
             with flop_counter:
                 while True:
                     out = model(carry=carry, batch=batch, return_keys=[])
@@ -182,31 +183,43 @@ def run_measure(args):
                     # Augmented/SHREK: (carry, loss, metrics, preds, all_finish, act_halt)
                     # With trace: (trace, carry, loss, metrics, preds, all_finish, act_halt)
                     if hasattr(out[0], "halted"):
-                        carry, all_finish = out[0], out[4]
+                        carry, metrics, all_finish = out[0], out[2], out[4]
                     else:
-                        carry, all_finish = out[1], out[5]
+                        carry, metrics, all_finish = out[1], out[3], out[5]
                     step += 1
                     if all_finish:
                         break
 
             batch_flops = flop_counter.get_total_flops()
             total_flops += batch_flops
-            total_steps += step * batch_size
             total_puzzles += batch_size
 
+            # Extract real avg steps from model metrics (sum of per-puzzle steps)
+            if metrics and "steps" in metrics:
+                avg_halt_steps = metrics["steps"].item() / batch_size
+            else:
+                avg_halt_steps = step
+            total_steps += avg_halt_steps * batch_size
+
             print(f"  Batch {idx+1}/{num_batches}: "
-                  f"FLOPs={batch_flops/batch_size:.2e}/puzzle, Steps={step}")
+                  f"FLOPs={batch_flops/batch_size:.2e}/puzzle, "
+                  f"BatchSteps={step}, AvgHaltStep={avg_halt_steps:.1f}")
 
     avg_flops = total_flops / total_puzzles
-    avg_steps = total_steps / total_puzzles
+    avg_halt_steps = total_steps / total_puzzles
+    flops_per_step = avg_flops / 16  # Always 16 batch steps
+    # Adjusted FLOPs: per-step FLOPs * actual avg halting steps
+    adjusted_flops = flops_per_step * avg_halt_steps
 
     print("=" * 60)
     print(f"Model:                 {args.name}")
     print(f"Task:                  {args.task}")
     print(f"Parameters:            {total_params:,}")
     print(f"Puzzles evaluated:     {total_puzzles}")
-    print(f"Avg reasoning steps:   {avg_steps:.2f}")
-    print(f"Avg GFLOPs per puzzle: {avg_flops / 1e9:.4f}")
+    print(f"Avg halt steps:        {avg_halt_steps:.2f} (of 16 max)")
+    print(f"GFLOPs per step:       {flops_per_step / 1e9:.4f}")
+    print(f"GFLOPs total (16 steps): {avg_flops / 1e9:.4f}")
+    print(f"GFLOPs adjusted:       {adjusted_flops / 1e9:.4f}")
     print("=" * 60)
 
     output = {
@@ -215,10 +228,13 @@ def run_measure(args):
         "checkpoint": checkpoint_file,
         "parameters": total_params,
         "num_puzzles": total_puzzles,
-        "avg_steps": avg_steps,
-        "avg_flops_per_puzzle": avg_flops,
-        "avg_gflops_per_puzzle": avg_flops / 1e9,
-        "total_flops": total_flops,
+        "avg_halt_steps": avg_halt_steps,
+        "flops_per_step": flops_per_step,
+        "gflops_per_step": flops_per_step / 1e9,
+        "avg_flops_per_puzzle": adjusted_flops,
+        "avg_gflops_per_puzzle": adjusted_flops / 1e9,
+        "total_flops_16_steps": avg_flops,
+        "total_gflops_16_steps": avg_flops / 1e9,
     }
 
     os.makedirs(args.results_dir, exist_ok=True)
