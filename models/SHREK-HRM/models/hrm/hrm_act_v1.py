@@ -69,7 +69,7 @@ class HierarchicalReasoningModel_ACTV1Config(BaseModel):
 
     # SHREK ablation flags — disable components from training scripts
     enable_error_injection: bool = True    # Error-Conditioned Injection (flip rate + learned estimator)
-    enable_error_halting: bool = True      # Error-Guided Halting (error signal fed to Q-head)
+    enable_stagnation_delta: bool = True   # Stagnation-Aware Q-head (delta fed to Q-head)
 
     forward_dtype: str = "bfloat16"
 
@@ -128,8 +128,8 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
 
         self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.vocab_size, bias=False)
-        # SHREK: Q-head input size depends on error-guided halting flag
-        q_head_input_size = self.config.hidden_size + (1 if self.config.enable_error_halting else 0)
+        # SHREK: Q-head input size depends on stagnation delta flag
+        q_head_input_size = self.config.hidden_size + (1 if self.config.enable_stagnation_delta else 0)
         self.q_head       = CastedLinear(q_head_input_size, 2, bias=True)
 
         # SHREK: error_encoder maps the scalar error score -> hidden_size vector for injection into z_H
@@ -286,13 +286,16 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         # learned_err becomes accurate over training and takes over as the stronger signal
         error = 0.5 * flip_err + 0.5 * learned_err                            # (B,)
 
-        # SHREK Component 2: Error-Guided Halting
-        # Reuses the error signal (already computed for injection) to inform halting.
-        # Q-head sees "how wrong am I?" — high error = keep going, low error = halt.
-        # error is already detached from z_H (via learned_err's detach), so no parasitic gradients.
-        # Ablation: can be disabled via config.enable_error_halting=False
-        if self.config.enable_error_halting:
-            q_input = torch.cat([z_H[:, 0].to(torch.float32), error.detach().unsqueeze(-1)], dim=-1)  # (B, hidden_size+1)
+        # SHREK Component 2: Stagnation-Aware Q-head
+        # Ablation: can be disabled via config.enable_stagnation_delta=False
+        if self.config.enable_stagnation_delta:
+            # Compute how much z_H changed during this reasoning step.
+            # CRITICAL: detach so Q-head gradients don't flow through all positions of z_H.
+            z_H_f = z_H.detach().float()
+            z_H_start = carry.z_H.detach().float()
+            delta = torch.norm(z_H_f - z_H_start, dim=(1, 2)) / (torch.norm(z_H_start, dim=(1, 2)) + 1e-6)  # (B,)
+            # Q-head reads CLS token + stagnation delta
+            q_input = torch.cat([z_H[:, 0].to(torch.float32), delta.unsqueeze(-1)], dim=-1)  # (B, hidden_size+1)
         else:
             # Fallback: same as original HRM — Q-head reads CLS token only
             q_input = z_H[:, 0].to(torch.float32)  # (B, hidden_size)

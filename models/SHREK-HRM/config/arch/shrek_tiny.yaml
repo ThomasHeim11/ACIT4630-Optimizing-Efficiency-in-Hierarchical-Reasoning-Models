@@ -32,4 +32,4 @@ pos_encodings: rope
 
 # SHREK ablation flags — override from training scripts to disable components
 enable_error_injection: true    # Error-Conditioned Injection (flip rate + learned estimator)
-enable_error_halting: true      # Error-Guided Halting (error signal fed to Q-head)
+enable_stagnation_delta: true   # Stagnation-Aware Q-head (delta fed to Q-head)
