@@ -172,51 +172,60 @@ def run_measure(args):
                 carry = model.initial_carry(batch)
 
             # Forward loop with FLOPs counting
+            # Track per-puzzle halting via Q-logits
+            halt_step = torch.zeros(batch_size, dtype=torch.float32, device="cuda")
+            has_halted = torch.zeros(batch_size, dtype=torch.bool, device="cuda")
+
             flop_counter = FlopCounterMode(display=False)
             step = 0
-            metrics = None
             with flop_counter:
                 while True:
-                    out = model(carry=carry, batch=batch, return_keys=[])
+                    out = model(carry=carry, batch=batch,
+                                return_keys=["q_halt_logits", "q_continue_logits"])
                     # Handle variable return lengths:
                     # HRM/TRM: (carry, loss, metrics, preds, all_finish)
                     # Augmented/SHREK: (carry, loss, metrics, preds, all_finish, act_halt)
                     # With trace: (trace, carry, loss, metrics, preds, all_finish, act_halt)
                     if hasattr(out[0], "halted"):
-                        carry, metrics, all_finish = out[0], out[2], out[4]
+                        carry, preds, all_finish = out[0], out[3], out[4]
                     else:
-                        carry, metrics, all_finish = out[1], out[3], out[5]
+                        carry, preds, all_finish = out[1], out[4], out[5]
                     step += 1
+
+                    # Determine per-puzzle halting from Q-logits
+                    if "q_halt_logits" in preds and "q_continue_logits" in preds:
+                        would_halt = preds["q_halt_logits"] > preds["q_continue_logits"]
+                        newly_halted = would_halt & ~has_halted
+                        halt_step[newly_halted] = step
+                        has_halted |= would_halt
+
                     if all_finish:
                         break
+
+            # Puzzles that never halted via Q-logits get max steps
+            halt_step[~has_halted] = step
+            avg_halt = halt_step.mean().item()
 
             batch_flops = flop_counter.get_total_flops()
             total_flops += batch_flops
             total_puzzles += batch_size
-
-            # Extract real avg steps from model metrics (sum of per-puzzle steps)
-            if metrics and "steps" in metrics:
-                avg_halt_steps = metrics["steps"].item() / batch_size
-            else:
-                avg_halt_steps = step
-            total_steps += avg_halt_steps * batch_size
+            total_steps += halt_step.sum().item()
 
             print(f"  Batch {idx+1}/{num_batches}: "
                   f"FLOPs={batch_flops/batch_size:.2e}/puzzle, "
-                  f"BatchSteps={step}, AvgHaltStep={avg_halt_steps:.1f}")
+                  f"BatchSteps={step}, AvgHaltStep={avg_halt:.1f}")
 
     avg_flops = total_flops / total_puzzles
-    avg_halt_steps = total_steps / total_puzzles
+    avg_steps = total_steps / total_puzzles
     flops_per_step = avg_flops / 16  # Always 16 batch steps
-    # Adjusted FLOPs: per-step FLOPs * actual avg halting steps
-    adjusted_flops = flops_per_step * avg_halt_steps
+    adjusted_flops = flops_per_step * avg_steps
 
     print("=" * 60)
     print(f"Model:                 {args.name}")
     print(f"Task:                  {args.task}")
     print(f"Parameters:            {total_params:,}")
     print(f"Puzzles evaluated:     {total_puzzles}")
-    print(f"Avg halt steps:        {avg_halt_steps:.2f} (of 16 max)")
+    print(f"Avg halt steps:        {avg_steps:.2f} (of 16 max)")
     print(f"GFLOPs per step:       {flops_per_step / 1e9:.4f}")
     print(f"GFLOPs total (16 steps): {avg_flops / 1e9:.4f}")
     print(f"GFLOPs adjusted:       {adjusted_flops / 1e9:.4f}")
@@ -228,7 +237,7 @@ def run_measure(args):
         "checkpoint": checkpoint_file,
         "parameters": total_params,
         "num_puzzles": total_puzzles,
-        "avg_halt_steps": avg_halt_steps,
+        "avg_steps": avg_steps,
         "flops_per_step": flops_per_step,
         "gflops_per_step": flops_per_step / 1e9,
         "avg_flops_per_puzzle": adjusted_flops,
