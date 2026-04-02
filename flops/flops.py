@@ -22,6 +22,7 @@ import argparse
 import os
 import sys
 import json
+import re
 import glob as globmod
 
 
@@ -29,25 +30,68 @@ import glob as globmod
 # Measure mode (GPU required)
 # =====================================================================
 
+def find_latest_checkpoint(path):
+    """Given a file or directory, return the latest step_* checkpoint file."""
+    if os.path.isfile(path):
+        return path
+    if not os.path.isdir(path):
+        raise FileNotFoundError(f"Not found: {path}")
+
+    steps = []
+    for f in os.listdir(path):
+        m = re.match(r"step_(\d+)$", f)
+        if m:
+            steps.append((int(m.group(1)), os.path.join(path, f)))
+    if not steps:
+        # Look one level deeper
+        for d in os.listdir(path):
+            sub = os.path.join(path, d)
+            if os.path.isdir(sub):
+                for f in os.listdir(sub):
+                    m2 = re.match(r"step_(\d+)$", f)
+                    if m2:
+                        steps.append((int(m2.group(1)), os.path.join(sub, f)))
+    if not steps:
+        raise FileNotFoundError(f"No step_* checkpoints in {path}")
+    steps.sort()
+    print(f"  Auto-selected: {steps[-1][1]}")
+    return steps[-1][1]
+
+
 def run_measure(args):
-    """Run FLOPs measurement on GPU using each model's own eval_utils."""
+    """Run FLOPs measurement on GPU."""
     import torch
+    import yaml
+    import inspect
     import numpy as np
     from torch.utils.flop_counter import FlopCounterMode
 
     torch.cuda.set_device(0)
 
-    # cd into model directory so all relative imports and paths work
+    # cd into model directory so all relative imports and data paths work
     model_dir = os.path.abspath(args.model_dir)
     os.chdir(model_dir)
     sys.path.insert(0, model_dir)
 
     from pretrain import PretrainConfig, init_train_state, create_dataloader
-    from eval_utils import load_checkpoint_and_config
 
-    # Load checkpoint and config using model's own loader
-    checkpoint_file, config, checkpoint_dir = load_checkpoint_and_config(args.checkpoint)
+    # Find checkpoint file and load config
+    checkpoint_file = find_latest_checkpoint(args.checkpoint)
+    checkpoint_dir = os.path.dirname(checkpoint_file)
+    config_path = os.path.join(checkpoint_dir, "all_config.yaml")
 
+    with open(config_path, "r") as f:
+        raw_config = yaml.safe_load(f)
+
+    # Fix SHREK configs: checkpoints trained before stagnation_delta/error_injection
+    # existed don't have these keys. If missing, set to False to match checkpoint weights.
+    arch = raw_config.get("arch", {})
+    if "enable_stagnation_delta" not in arch and "enable_error_injection" not in arch:
+        arch["enable_stagnation_delta"] = False
+        arch["enable_error_injection"] = False
+        raw_config["arch"] = arch
+
+    config = PretrainConfig(**raw_config)
     torch.random.manual_seed(config.seed)
 
     train_loader, train_metadata = create_dataloader(
@@ -60,13 +104,13 @@ def run_measure(args):
     )
 
     # init_train_state: TRM needs rank, others don't
-    import inspect
     sig = inspect.signature(init_train_state)
     if "rank" in sig.parameters:
         train_state = init_train_state(config, train_metadata, world_size=1, rank=0)
     else:
         train_state = init_train_state(config, train_metadata, world_size=1)
 
+    # Load weights
     print(f"Loading checkpoint: {checkpoint_file}")
     checkpoint_data = torch.load(checkpoint_file, map_location="cuda")
     try:
@@ -100,7 +144,6 @@ def run_measure(args):
 
     total_flops = 0
     total_steps = 0
-    total_correct = 0
     total_puzzles = 0
 
     with torch.no_grad():
@@ -114,25 +157,24 @@ def run_measure(args):
                 "puzzle_identifiers": torch.zeros(batch_size, dtype=torch.long, device="cuda"),
             }
 
-            # Initialize carry the way eval_utils does it
+            # Initialize carry (all models take batch dict)
             with torch.device("cuda"):
                 carry = model.initial_carry(batch)
 
-            # Run forward steps with FLOPs counting
+            # Forward loop with FLOPs counting
             flop_counter = FlopCounterMode(display=False)
             step = 0
             with flop_counter:
                 while True:
                     out = model(carry=carry, batch=batch, return_keys=[])
-                    # Extract carry and all_finish from variable-length output
+                    # Handle variable return lengths:
+                    # HRM/TRM: (carry, loss, metrics, preds, all_finish)
+                    # Augmented/SHREK: (carry, loss, metrics, preds, all_finish, act_halt)
+                    # With trace: (trace, carry, loss, metrics, preds, all_finish, act_halt)
                     if hasattr(out[0], "halted"):
-                        # (carry, loss, metrics, preds, all_finish, ...)
-                        carry = out[0]
-                        all_finish = out[4]
+                        carry, all_finish = out[0], out[4]
                     else:
-                        # (trace, carry, loss, metrics, preds, all_finish, ...)
-                        carry = out[1]
-                        all_finish = out[5]
+                        carry, all_finish = out[1], out[5]
                     step += 1
                     if all_finish:
                         break
@@ -142,19 +184,8 @@ def run_measure(args):
             total_steps += step * batch_size
             total_puzzles += batch_size
 
-            # Check accuracy using final predictions
-            final_preds = torch.argmax(
-                model(carry=carry, batch=batch, return_keys=["logits"])
-                if False else  # We already have the last step's carry
-                out[3]["logits"] if hasattr(out[0], "halted") else out[4]["logits"],
-                dim=-1,
-            ) if False else None
-            # Simple accuracy: compare last step's carry predictions
-            # (exact accuracy check is complex, just count steps for FLOPs)
-
             print(f"  Batch {idx+1}/{num_batches}: "
-                  f"FLOPs={batch_flops/batch_size:.2e}/puzzle, "
-                  f"Steps={step}")
+                  f"FLOPs={batch_flops/batch_size:.2e}/puzzle, Steps={step}")
 
     avg_flops = total_flops / total_puzzles
     avg_steps = total_steps / total_puzzles
@@ -180,10 +211,9 @@ def run_measure(args):
         "total_flops": total_flops,
     }
 
-    results_dir = os.path.abspath(args.results_dir) if os.path.isabs(args.results_dir) else args.results_dir
-    os.makedirs(results_dir, exist_ok=True)
+    os.makedirs(args.results_dir, exist_ok=True)
     safe_name = args.name.lower().replace(" ", "_")
-    output_path = os.path.join(results_dir, f"{safe_name}_{args.task}.json")
+    output_path = os.path.join(args.results_dir, f"{safe_name}_{args.task}.json")
     with open(output_path, "w") as f:
         json.dump(output, f, indent=2)
     print(f"Results saved to: {output_path}")
@@ -206,7 +236,6 @@ MODEL_COLORS = {
 def make_chart(models, title, filename):
     """Bianco et al. style bubble chart: GFLOPs vs Accuracy, bubble size = params."""
     import matplotlib.pyplot as plt
-    import numpy as np
 
     fig, ax = plt.subplots(figsize=(12, 8))
 
@@ -221,9 +250,9 @@ def make_chart(models, title, filename):
             norm = 0.5
         size = 150 + norm * 650
 
+        acc = m.get("exact_accuracy", 0) * 100
         ax.scatter(
-            m["avg_gflops_per_puzzle"],
-            m.get("exact_accuracy", 0) * 100,
+            m["avg_gflops_per_puzzle"], acc,
             s=size, c=color, alpha=0.75,
             edgecolors="black", linewidth=1.2, zorder=5,
         )
@@ -232,8 +261,7 @@ def make_chart(models, title, filename):
         if "Original" in m["name"]:
             oy = -18
         ax.annotate(
-            m["name"],
-            (m["avg_gflops_per_puzzle"], m.get("exact_accuracy", 0) * 100),
+            m["name"], (m["avg_gflops_per_puzzle"], acc),
             textcoords="offset points", xytext=(ox, oy),
             fontsize=11, fontweight="bold", color=color,
         )
@@ -249,26 +277,17 @@ def make_chart(models, title, filename):
         legend_params = [param_vals[0], param_vals[len(param_vals)//2], param_vals[-1]]
     else:
         legend_params = param_vals
-    legend_handles = []
-    legend_labels = []
+    legend_handles, legend_labels = [], []
     for p in legend_params:
-        if max_p > min_p:
-            norm = (p - min_p) / (max_p - min_p)
-        else:
-            norm = 0.5
+        norm = (p - min_p) / (max_p - min_p) if max_p > min_p else 0.5
         s = 150 + norm * 650
         h = ax.scatter([], [], s=s, c="gray", alpha=0.4, edgecolors="black", linewidth=1)
         legend_handles.append(h)
-        if p >= 1e6:
-            legend_labels.append(f"{p/1e6:.0f}M")
-        else:
-            legend_labels.append(f"{p/1e3:.0f}K")
+        legend_labels.append(f"{p/1e6:.0f}M" if p >= 1e6 else f"{p/1e3:.0f}K")
 
-    ax.legend(
-        legend_handles, legend_labels,
-        loc="lower right", title="Parameters", title_fontsize=11,
-        fontsize=10, framealpha=0.9,
-    )
+    ax.legend(legend_handles, legend_labels,
+              loc="lower right", title="Parameters",
+              title_fontsize=11, fontsize=10, framealpha=0.9)
 
     plt.tight_layout()
     plt.savefig(filename, dpi=150, bbox_inches="tight")
