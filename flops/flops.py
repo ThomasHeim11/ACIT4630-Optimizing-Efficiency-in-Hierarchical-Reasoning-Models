@@ -83,12 +83,28 @@ def run_measure(args):
     with open(config_path, "r") as f:
         raw_config = yaml.safe_load(f)
 
-    # Fix SHREK configs: checkpoints trained before stagnation_delta/error_injection
-    # existed don't have these keys. If missing, set to False to match checkpoint weights.
+    # Load checkpoint weights early to detect architecture from weights
+    print(f"Loading checkpoint: {checkpoint_file}")
+    checkpoint_data = torch.load(checkpoint_file, map_location="cuda")
+
+    # Always strip _orig_mod. prefix (from torch.compile)
+    cleaned = {}
+    for k, v in checkpoint_data.items():
+        cleaned[k.removeprefix("_orig_mod.")] = v
+
+    # Auto-detect SHREK stagnation_delta from checkpoint weights:
+    # q_head.weight shape [2, 513] = stagnation delta enabled, [2, 512] = disabled
     arch = raw_config.get("arch", {})
-    if "enable_stagnation_delta" not in arch and "enable_error_injection" not in arch:
-        arch["enable_stagnation_delta"] = False
-        arch["enable_error_injection"] = False
+    if "enable_stagnation_delta" not in arch:
+        q_key = "model.inner.q_head.weight"
+        if q_key in cleaned:
+            has_stag = cleaned[q_key].shape[1] > arch.get("hidden_size", 512)
+            arch["enable_stagnation_delta"] = has_stag
+            arch.setdefault("enable_error_injection", has_stag)
+            print(f"  Auto-detected enable_stagnation_delta={has_stag}")
+        else:
+            arch["enable_stagnation_delta"] = False
+            arch["enable_error_injection"] = False
         raw_config["arch"] = arch
 
     config = PretrainConfig(**raw_config)
@@ -111,13 +127,7 @@ def run_measure(args):
         train_state = init_train_state(config, train_metadata, world_size=1)
 
     # Load weights
-    print(f"Loading checkpoint: {checkpoint_file}")
-    checkpoint_data = torch.load(checkpoint_file, map_location="cuda")
-    try:
-        train_state.model.load_state_dict(checkpoint_data, assign=True)
-    except RuntimeError:
-        cleaned = {k.removeprefix("_orig_mod."): v for k, v in checkpoint_data.items()}
-        train_state.model.load_state_dict(cleaned, assign=True)
+    train_state.model.load_state_dict(cleaned, assign=True)
 
     model = train_state.model
     model.eval()
