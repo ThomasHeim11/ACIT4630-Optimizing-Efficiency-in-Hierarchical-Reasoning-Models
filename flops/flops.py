@@ -79,6 +79,16 @@ def load_model(checkpoint_path, model_dir=None):
     with open(config_path, "r") as f:
         config = PretrainConfig(**yaml.safe_load(f))
 
+    # Resolve relative data paths (they're relative to model_dir)
+    base = os.path.abspath(model_dir) if model_dir else os.getcwd()
+    if hasattr(config, "data_path") and config.data_path and not os.path.isabs(config.data_path):
+        config.data_path = os.path.normpath(os.path.join(base, config.data_path))
+    if hasattr(config, "data_paths") and config.data_paths:
+        config.data_paths = [
+            os.path.normpath(os.path.join(base, p)) if not os.path.isabs(p) else p
+            for p in config.data_paths
+        ]
+
     torch.random.manual_seed(config.seed)
 
     train_loader, train_metadata = create_dataloader(
