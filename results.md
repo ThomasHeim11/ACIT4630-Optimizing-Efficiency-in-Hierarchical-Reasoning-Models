@@ -138,6 +138,39 @@ Data mixing (hints) helps SHREK Large by ~5% but surprisingly doesn't help SHREK
 
 ---
 
+## Computational Cost (FLOPs)
+
+FLOPs measured on GPU using PyTorch's `FlopCounterMode`. Per-step FLOPs counted across 16 batch forward passes, then multiplied by the model's average halting step (determined from Q-head logits). All models evaluated on 100 test puzzles. Augmented HRM excluded as it uses different training techniques (data mixing, bootstrap, relabeling).
+
+### Sudoku-Extreme
+
+| Model | Params | Avg Steps | GFLOPs/step | GFLOPs/puzzle | Accuracy |
+|---|---|---|---|---|---|
+| SHREK Tiny | ~14M | 9.9 | 6.71 | 66.7 | ~63% |
+| SHREK Large | ~27M | 8.2 | 13.41 | 110.4 | ~65% |
+| TRM MLP | ~5M | 4.6 | 25.63 | 118.4 | ~84% |
+| Original HRM | ~27M | 10.7 | 13.41 | 143.5 | 53% |
+| TRM Attention | ~7M | 5.9 | 28.58 | 168.6 | ~70% |
+
+### Maze-Hard
+
+| Model | Params | Avg Steps | GFLOPs/step | GFLOPs/puzzle | Accuracy |
+|---|---|---|---|---|---|
+| TRM Attention | ~7M | 1.2 | 238.85 | 274.7 | ~87% |
+| SHREK Tiny | ~14M | 5.6 | 73.70 | 409.8 | ~73% |
+| Original HRM | ~27M | 6.7 | 147.39 | 983.1 | ~75% |
+| SHREK Large | ~27M | 10.3 | 147.39 | 1519.6 | ~83% |
+
+### Key Findings — Computational Efficiency
+
+- **SHREK Large uses less compute than Original HRM on Sudoku** (110 vs 144 GFLOPs) while achieving +12% higher accuracy — the error signal helps the Q-head halt earlier (8.2 vs 10.7 steps)
+- **SHREK Tiny is the most compute-efficient HRM variant** — 67 GFLOPs on Sudoku, less than half of Original HRM
+- **TRM MLP dominates Sudoku efficiency** — highest accuracy (84%) at moderate compute (118 GFLOPs) due to its MLP architecture suited for fixed 9x9 grids
+- **TRM Attention dominates Maze efficiency** — 87% at only 275 GFLOPs, halting after just 1.2 steps on average
+- **Maze requires ~10x more GFLOPs per step than Sudoku** due to the larger sequence length (901 vs 82 tokens)
+
+---
+
 ## ARC-AGI
 
 Not yet attempted.

@@ -260,23 +260,45 @@ def run_measure(args):
 
 MODEL_COLORS = {
     "Original HRM":  "#e74c3c",
-    "Augmented HRM": "#f39c12",
     "SHREK Large":   "#3498db",
     "SHREK Tiny":    "#1abc9c",
     "TRM Attention":  "#9b59b6",
     "TRM MLP":        "#2ecc71",
 }
 
+# Single checkpoint, vanilla dataset accuracy (%) from results.md
+MODEL_ACCURACY = {
+    ("Original HRM", "sudoku"):  53.0,
+    ("SHREK Large", "sudoku"):   65.0,
+    ("SHREK Tiny", "sudoku"):    63.0,
+    ("TRM Attention", "sudoku"): 70.0,
+    ("TRM MLP", "sudoku"):       84.0,
+    ("Original HRM", "maze"):    75.0,
+    ("SHREK Large", "maze"):     83.0,
+    ("SHREK Tiny", "maze"):      73.0,
+    ("TRM Attention", "maze"):   87.0,
+}
+
+# Models to exclude from charts (uses different training techniques)
+EXCLUDE_MODELS = {"Augmented HRM"}
+
 
 def make_chart(models, title, filename):
     """Bianco et al. style bubble chart: GFLOPs vs Accuracy, bubble size = params."""
     import matplotlib.pyplot as plt
 
-    fig, ax = plt.subplots(figsize=(12, 8))
+    # Filter out excluded models
+    models = [m for m in models if m["name"] not in EXCLUDE_MODELS]
+    if not models:
+        print(f"No models to plot for {filename}")
+        return
+
+    fig, ax = plt.subplots(figsize=(13, 8))
 
     all_params = [m["parameters"] for m in models]
     min_p, max_p = min(all_params), max(all_params)
 
+    points = []
     for m in models:
         color = MODEL_COLORS.get(m["name"], "#7f8c8d")
         if max_p > min_p:
@@ -285,20 +307,38 @@ def make_chart(models, title, filename):
             norm = 0.5
         size = 150 + norm * 650
 
-        acc = m.get("exact_accuracy", 0) * 100
+        task = m.get("task", "")
+        acc = MODEL_ACCURACY.get((m["name"], task), 0)
+        x = m["avg_gflops_per_puzzle"]
+
         ax.scatter(
-            m["avg_gflops_per_puzzle"], acc,
+            x, acc,
             s=size, c=color, alpha=0.75,
             edgecolors="black", linewidth=1.2, zorder=5,
         )
+        points.append((m["name"], x, acc, color))
 
-        ox, oy = 14, 10
-        if "Original" in m["name"]:
-            oy = -18
+    # Smart label placement — avoid overlaps
+    points.sort(key=lambda p: p[1])  # sort by x
+    for i, (name, x, y, color) in enumerate(points):
+        # Check if previous point is close on x-axis
+        too_close = False
+        if i > 0:
+            prev_x = points[i - 1][1]
+            x_range = max(p[1] for p in points) - min(p[1] for p in points)
+            if x_range > 0 and abs(x - prev_x) / x_range < 0.1:
+                too_close = True
+
+        if too_close:
+            ox, oy, ha, va = 0, -18, "center", "top"
+        else:
+            ox, oy, ha, va = 14, 10, "left", "bottom"
+
         ax.annotate(
-            m["name"], (m["avg_gflops_per_puzzle"], acc),
+            name, (x, y),
             textcoords="offset points", xytext=(ox, oy),
-            fontsize=11, fontweight="bold", color=color,
+            fontsize=10, fontweight="bold", color=color,
+            ha=ha, va=va,
         )
 
     ax.set_xlabel("Operations [G-FLOPs]", fontsize=14)
@@ -307,18 +347,28 @@ def make_chart(models, title, filename):
     ax.grid(True, alpha=0.3)
     ax.tick_params(labelsize=12)
 
-    param_vals = sorted(set(all_params))
-    if len(param_vals) >= 3:
-        legend_params = [param_vals[0], param_vals[len(param_vals)//2], param_vals[-1]]
-    else:
-        legend_params = param_vals
+    # Axis padding
+    all_x = [p[1] for p in points]
+    all_y = [p[2] for p in points]
+    x_pad = (max(all_x) - min(all_x)) * 0.15 if len(all_x) > 1 else max(all_x) * 0.1
+    y_pad = (max(all_y) - min(all_y)) * 0.12 if len(all_y) > 1 else 5
+    ax.set_xlim(min(all_x) - x_pad, max(all_x) + x_pad * 1.5)
+    ax.set_ylim(min(all_y) - y_pad, max(all_y) + y_pad)
+
+    # Show distinct parameter sizes in legend (rounded to M to deduplicate)
+    seen = {}
+    for p in sorted(all_params):
+        label = f"{p / 1e6:.0f}M"
+        if label not in seen:
+            seen[label] = p
+    legend_params = list(seen.values())
     legend_handles, legend_labels = [], []
     for p in legend_params:
         norm = (p - min_p) / (max_p - min_p) if max_p > min_p else 0.5
         s = 150 + norm * 650
         h = ax.scatter([], [], s=s, c="gray", alpha=0.4, edgecolors="black", linewidth=1)
         legend_handles.append(h)
-        legend_labels.append(f"{p/1e6:.0f}M" if p >= 1e6 else f"{p/1e3:.0f}K")
+        legend_labels.append(f"{p / 1e6:.0f}M" if p >= 1e6 else f"{p / 1e3:.0f}K")
 
     ax.legend(legend_handles, legend_labels,
               loc="lower right", title="Parameters",
@@ -328,11 +378,14 @@ def make_chart(models, title, filename):
     plt.savefig(filename, dpi=150, bbox_inches="tight")
     print(f"Chart saved to: {filename}")
 
-    print(f"\n{'Model':<20} {'Params':>8} {'Steps':>6} {'GFLOPs':>8}")
-    print("-" * 45)
+    print(f"\n{'Model':<20} {'Params':>8} {'Steps':>6} {'GFLOPs':>8} {'Accuracy':>9}")
+    print("-" * 55)
     for m in sorted(models, key=lambda x: x["avg_gflops_per_puzzle"]):
-        print(f"{m['name']:<20} {m['parameters']/1e6:>6.1f}M "
-              f"{m['avg_steps']:>6.1f} {m['avg_gflops_per_puzzle']:>8.2f}")
+        task = m.get("task", "")
+        acc = MODEL_ACCURACY.get((m["name"], task), 0)
+        print(f"{m['name']:<20} {m['parameters'] / 1e6:>6.1f}M "
+              f"{m['avg_steps']:>6.1f} {m['avg_gflops_per_puzzle']:>8.2f} "
+              f"{acc:>8.1f}%")
 
 
 def run_plot(args):

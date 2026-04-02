@@ -13,7 +13,6 @@ FLOPS=~/HMR/flops/flops.py
 RESULTS=~/HMR/flops/results
 CKPT=~/HMR/checkpoints
 HRM_DIR=~/HMR/models/HRM\(Original\)/HRM-main
-AUG_DIR=~/HMR/models/hrm-mechanistic-analysis-main
 SHREK_DIR=~/HMR/models/SHREK-HRM
 TRM_DIR=~/HMR/models/TinyRecursiveModels
 
@@ -26,12 +25,6 @@ DISABLE_COMPILE=1 python3 $FLOPS measure \
     --checkpoint "$CKPT/sudoku-extreme/original-hrm" \
     --model-dir "$HRM_DIR" \
     --name "Original HRM" --task sudoku --results-dir $RESULTS
-
-echo "=== Augmented HRM (Sudoku) ==="
-DISABLE_COMPILE=1 python3 $FLOPS measure \
-    --checkpoint "$CKPT/sudoku-extreme/augmented-hrm" \
-    --model-dir "$AUG_DIR" \
-    --name "Augmented HRM" --task sudoku --results-dir $RESULTS
 
 echo "=== SHREK Large (Sudoku) ==="
 DISABLE_COMPILE=1 python3 $FLOPS measure \

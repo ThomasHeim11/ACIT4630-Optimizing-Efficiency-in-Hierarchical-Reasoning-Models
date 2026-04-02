@@ -1,0 +1,14 @@
+{
+  "name": "TRM Attention",
+  "task": "maze",
+  "checkpoint": "/home/thheim/HMR/checkpoints/maze-hard/trm-attention/step_156240",
+  "parameters": 6822914,
+  "num_puzzles": 100,
+  "avg_steps": 1.15,
+  "flops_per_step": 238853875712.0,
+  "gflops_per_step": 238.853875712,
+  "avg_flops_per_puzzle": 274681957068.8,
+  "avg_gflops_per_puzzle": 274.6819570688,
+  "total_flops_16_steps": 3821662011392.0,
+  "total_gflops_16_steps": 3821.662011392
+}

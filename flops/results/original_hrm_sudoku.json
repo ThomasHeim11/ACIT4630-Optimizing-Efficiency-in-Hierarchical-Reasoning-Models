@@ -1,0 +1,14 @@
+{
+  "name": "Original HRM",
+  "task": "sudoku",
+  "checkpoint": "/home/thheim/HMR/checkpoints/sudoku-extreme/original-hrm/step_52080",
+  "parameters": 27275266,
+  "num_puzzles": 100,
+  "avg_steps": 10.7,
+  "flops_per_step": 13414309888.0,
+  "gflops_per_step": 13.414309888,
+  "avg_flops_per_puzzle": 143533115801.59998,
+  "avg_gflops_per_puzzle": 143.53311580159996,
+  "total_flops_16_steps": 214628958208.0,
+  "total_gflops_16_steps": 214.628958208
+}
