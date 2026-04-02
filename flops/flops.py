@@ -64,10 +64,12 @@ def resolve_checkpoint(path):
     return chosen
 
 
-def load_model(checkpoint_path):
+def load_model(checkpoint_path, model_dir=None):
     """Load model from checkpoint and its config."""
     import yaml
     import torch
+    if model_dir:
+        sys.path.insert(0, os.path.abspath(model_dir))
     from pretrain import PretrainConfig, init_train_state, create_dataloader
 
     checkpoint_path = resolve_checkpoint(checkpoint_path)
@@ -193,7 +195,8 @@ def run_measure(args):
     torch.cuda.set_device(0)
 
     print(f"Loading model from: {args.checkpoint}")
-    model, config = load_model(args.checkpoint)
+    print(f"Model directory: {args.model_dir}")
+    model, config = load_model(args.checkpoint, model_dir=args.model_dir)
 
     total_params, trainable_params = count_parameters(model)
     data_path = getattr(config, "data_path", None) or config.data_paths[0]
@@ -380,6 +383,7 @@ def main():
     # -- measure --
     m = sub.add_parser("measure", help="Measure FLOPs on GPU (run on cluster)")
     m.add_argument("--checkpoint", required=True, help="Path to model checkpoint")
+    m.add_argument("--model-dir", required=True, help="Path to model source (contains pretrain.py)")
     m.add_argument("--name", required=True, help="Model name (e.g. 'SHREK Large')")
     m.add_argument("--task", required=True, help="Task name (e.g. 'sudoku', 'maze')")
     m.add_argument("--num-samples", type=int, default=100, help="Test puzzles to measure")
