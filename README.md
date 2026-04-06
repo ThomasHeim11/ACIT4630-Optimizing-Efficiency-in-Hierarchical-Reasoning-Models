@@ -247,6 +247,13 @@ Total per puzzle = avg_act_steps * H_cycles * (L_cycles * L_block + H_block) * s
 
 ---
 
+## Pre-trained Checkpoints & Dataset
+
+- **Checkpoints**: [HRM-Reproduction-Checkpoints](https://huggingface.co/ThomasHeim/HRM-Reproduction-Checkpoints/tree/main) — All trained model weights (Original HRM, SHREK Large/Tiny, TRM Attention/MLP)
+- **Dataset**: [HRM-dataset](https://huggingface.co/datasets/ThomasHeim/HRM-dataset) — Sudoku-Extreme and Maze-Hard datasets
+
+---
+
 ## Source Papers
 
 - **HRM**: [Hierarchical Reasoning Model](https://arxiv.org/abs/2506.21734) (Wang et al., 2025)
