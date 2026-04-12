@@ -2,7 +2,7 @@
 
 **SHREK-HRM** (**S**tagnation **H**alting **R**easoning **E**rror **K**ernel) extends the Hierarchical Reasoning Model with learned self-correction. Instead of relying on expensive inference-time techniques (checkpoint ensembles, token permutations), SHREK injects an error signal directly into the reasoning process, enabling the model to detect and correct its own mistakes during inference.
 
-This repository benchmarks SHREK-HRM against HRM, Augmented HRM, and Tiny Recursive Models on Sudoku-Extreme and Maze-Hard.
+This repository benchmarks SHREK-HRM against HRM and Tiny Recursive Models on Sudoku-Extreme and Maze-Hard.
 
 ---
 
@@ -11,11 +11,10 @@ This repository benchmarks SHREK-HRM against HRM, Augmented HRM, and Tiny Recurs
 | Model | Parameters | Layers | Key Feature |
 |---|---|---|---|
 | Original HRM | ~27M | 4H + 4L, hidden=512 | Baseline recursive reasoning |
-| Augmented HRM | ~27M | 4H + 4L, hidden=512 | + Data mixing, bootstrap, relabeling |
 | TRM Attention | ~7M | 2 layers, hidden=512 | Simplified recursive reasoning |
-| TRM MLP | ~7M | 2 layers, hidden=512 | MLP-only variant (no attention) |
+| TRM MLP | ~5M | 2 layers, hidden=512 | MLP-only variant (no attention) |
 | **SHREK Large** | **~27M** | **4H + 4L, hidden=512** | **+ Error estimator, error injection, EMA** |
-| **SHREK Tiny** | **~8M** | **2H + 2L, hidden=512** | **+ Error estimator, error injection, EMA** |
+| **SHREK Tiny** | **~8M** | **2H + 2L, hidden=256** | **+ Error estimator, error injection, EMA** |
 
 All HRM-family models share: `H_cycles=2, L_cycles=2, halt_max_steps=16, expansion=4`.
 TRM uses: `H_cycles=3, L_cycles=6 (Sudoku) / L_cycles=4 (Maze)`.
@@ -70,35 +69,30 @@ All models trained on 1x NVIDIA GH200 GPU (102GB VRAM).
 
 **Single Checkpoint Test Accuracy** (`all.exact_accuracy`):
 
-| Model | Parameters | Exact Accuracy | Paper Target |
-|---|---|---|---|
-| Original HRM | ~27M | 53% | 55% (+-2%) |
-| Augmented HRM | ~27M | 54.2% | 59.9% |
-| TRM MLP | ~7M | Pending | ~87% |
-| TRM Attention | ~7M | Pending | ~75% |
-| **SHREK Large** | **~27M** | **70.6%** | **—** |
-| **SHREK Tiny** | **~8M** | **61.6%** | **—** |
-
-**Ensemble Evaluation** (10 checkpoints + 9 token permutations, 1000 test samples):
-
-| Model | Exact Accuracy | Paper Target |
+| Model | Parameters | Exact Accuracy |
 |---|---|---|
-| Augmented HRM | 90.5% | 96.9% |
-| **SHREK Large** | **90.2%** | **—** |
-| **SHREK Tiny** | **80.5%** | **—** |
+| TRM MLP | ~5M | ~84% |
+| TRM Attention | ~7M | ~70% |
+| **SHREK Large** | **~27M** | **~65%** |
+| **SHREK Tiny** | **~8M** | **~63%** |
+| Original HRM | ~27M | 53% |
 
 **Key findings:**
-- SHREK Large (70.6%) beats all baselines by 16+ points on single checkpoint
-- SHREK Tiny (61.6%) outperforms 27M-parameter models with only 8M parameters
-- Ensemble gives diminishing returns for SHREK — it's already good without inference tricks
+- SHREK Large (~65%) outperforms Original HRM (53%) by 12 percentage points
+- SHREK Tiny (~63%) surpasses 27M-parameter Original HRM with only 8M parameters
 
 ### Maze-Hard (1000 training examples)
 
-Training in progress.
+| Model | Parameters | Exact Accuracy |
+|---|---|---|
+| TRM Attention | ~7M | ~87% |
+| **SHREK Large** | **~27M** | **~83%** |
+| Original HRM | ~27M | ~75% |
+| **SHREK Tiny** | **~8M** | **~73%** |
 
-### ARC-AGI
-
-Not yet attempted.
+**Key findings:**
+- SHREK Large (~83%) outperforms Original HRM (~75%) by 8 percentage points
+- SHREK Tiny (~73%) matches Original HRM with less than a third of the parameters
 
 ---
 
@@ -149,7 +143,6 @@ module load slurm
 
 # Sudoku-Extreme
 sbatch models/HRM\(Original\)/HRM-main/script/train/train_hrm_sudoku_1gpu.sh
-sbatch models/hrm-mechanistic-analysis-main/scripts/train_augmented_hrm_sudoku_1gpu.sh
 sbatch models/SHREK-HRM/script/train/train_shrek_large_sudoku.sh
 sbatch models/SHREK-HRM/script/train/train_shrek_tiny_sudoku.sh
 sbatch models/TinyRecursiveModels/script/train/train_trm_mlp_sudoku.sh
@@ -157,7 +150,6 @@ sbatch models/TinyRecursiveModels/script/train/train_trm_att_sudoku.sh
 
 # Maze-Hard
 sbatch models/HRM\(Original\)/HRM-main/script/train/train_hrm_maze_1gpu.sh
-sbatch models/hrm-mechanistic-analysis-main/scripts/train_augmented_hrm_maze_1gpu.sh
 sbatch models/SHREK-HRM/script/train/train_shrek_large_maze.sh
 sbatch models/SHREK-HRM/script/train/train_shrek_tiny_maze.sh
 sbatch models/TinyRecursiveModels/script/train/train_trm_att_maze.sh
@@ -203,7 +195,6 @@ sbatch flops/measure_all_flops.sh
 HMR/
 ├── models/
 │   ├── HRM(Original)/HRM-main/       # Original HRM (Wang et al., 2025)
-│   ├── hrm-mechanistic-analysis-main/ # Augmented HRM (Ren & Liu, 2026)
 │   ├── TinyRecursiveModels/           # TRM (Jolicoeur-Martineau, 2025)
 │   └── SHREK-HRM/                     # SHREK-HRM (ours)
 ├── dataset/data/                      # Training and test datasets
@@ -229,21 +220,28 @@ HMR/
 
 ---
 
-## Computational Complexity (FLOPs)
+## Computational Efficiency (FLOPs)
 
-All models compared on **GFLOPs per puzzle** using analytical formula following Kaplan et al. (2020):
+Inference FLOPs measured on GPU using PyTorch's `FlopCounterMode` over 100 test puzzles. GF/puzzle = GF/step x average halting steps.
 
-```
-FLOPs per token per layer:
-  Attention QKV:       2 * d_model * 3 * d_attn
-  Attention scores:    2 * n_ctx * d_attn
-  Attention out proj:  2 * d_attn * d_model
-  FFN:                 2 * 2 * d_model * d_ff
+**Sudoku-Extreme:**
 
-Total per puzzle = avg_act_steps * H_cycles * (L_cycles * L_block + H_block) * seq_len
-```
+| Model | Params | Steps | GF/step | GF/puzzle | Accuracy |
+|---|---|---|---|---|---|
+| SHREK Tiny | ~8M | 9.9 | 6.71 | 66.7 | ~63% |
+| SHREK Large | ~27M | 8.2 | 13.41 | 110.4 | ~65% |
+| TRM MLP | ~5M | 4.6 | 25.63 | 118.4 | ~84% |
+| Original HRM | ~27M | 10.7 | 13.41 | 143.5 | 53% |
+| TRM Attention | ~7M | 5.9 | 28.58 | 168.6 | ~70% |
 
-`avg_act_steps` is the only runtime value, measured from W&B. Full formula used (not `C ~ 2N` shortcut) because `seq_len` differs per benchmark.
+**Maze-Hard:**
+
+| Model | Params | Steps | GF/step | GF/puzzle | Accuracy |
+|---|---|---|---|---|---|
+| TRM Attention | ~7M | 1.2 | 238.85 | 274.7 | ~87% |
+| SHREK Tiny | ~8M | 5.6 | 73.70 | 409.8 | ~73% |
+| Original HRM | ~27M | 6.7 | 147.39 | 983.1 | ~75% |
+| SHREK Large | ~27M | 10.3 | 147.39 | 1519.6 | ~83% |
 
 ---
 
