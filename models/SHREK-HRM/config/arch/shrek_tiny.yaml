@@ -1,10 +1,7 @@
-# SHREK-Tiny — ~7-8M parameters, competes with Tiny Recursive Model (TRM)
-# Follows TRM's approach: keep hidden_size=512 (same as Large) but reduce layers.
-# TRM showed that small recursive models need wide hidden states for adequate
-# representation capacity — reducing hidden_size causes training collapse.
-#
-# head_dim stays 64: 512/8 = 64 (same as SHREK-Large)
-# Params saved by halving layers (2+2 vs 4+4), not by shrinking hidden_size.
+# SHREK-Tiny V2 — ~3.4M parameters
+# Reduced hidden_size from 512 to 256 (combined with lower LR=7e-5 to prevent collapse)
+# head_dim stays 64: 256/4 = 64 (same as SHREK-Large)
+# Smaller than TRM (~5-7M) — strongest "less is more" test.
 
 name: hrm.hrm_act_v1@HierarchicalReasoningModel_ACTV1
 loss:
@@ -17,13 +14,12 @@ halt_max_steps: 16  # same as HRM — fair comparison at equal compute
 H_cycles: 2
 L_cycles: 2
 
-# SHREK: reduced from 4 to 2 layers each (same approach as TRM)
-# Keeps hidden_size=512 for stable training, saves params via fewer layers
+# 2H + 2L layers (same as before)
 H_layers: 2
 L_layers: 2
 
-hidden_size: 512   # same as Large and TRM — prevents training collapse
-num_heads: 8       # head_dim = 512/8 = 64
+hidden_size: 256   # V2: reduced from 512 — lower LR prevents collapse
+num_heads: 4       # head_dim = 256/4 = 64
 expansion: 4       # same as HRM baseline — fair comparison
 
 puzzle_emb_ndim: ${.hidden_size}

@@ -22,5 +22,5 @@ OMP_NUM_THREADS=8 python3 pretrain.py \
     weight_decay=1.0 \
     puzzle_emb_weight_decay=1.0 \
     +run_name=SHREK_Tiny_Maze \
-    +project_name=HRM_Maze_Comparison \
+    +project_name=HRM_Maze_Comparison_V2 \
     +ema=True

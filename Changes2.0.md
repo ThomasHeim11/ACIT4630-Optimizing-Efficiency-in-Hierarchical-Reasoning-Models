@@ -5,11 +5,11 @@
 1. SHREK models overfit on Sudoku after ~25k steps (accuracy crashes from 65% to ~8%)
 2. SHREK Tiny on Maze overfits after ~50k steps (73% drops to ~57%)
 3. SHREK Tiny is currently 14M params (hidden_size=512) instead of the intended ~7M
-4. Current SHREK uses HRM's 8-GPU settings (lr=1e-4) on 1 GPU — likely too aggressive
+4. Current SHREK Sudoku uses TRM's settings (lr=1e-4, batch=768) on an HRM-sized model
 
 ## Changes
 
-### 1. SHREK Tiny — Reduce to ~7M Parameters
+### 1. SHREK Tiny — Reduce to ~3.4M Parameters ✅
 
 Current: `hidden_size=512, num_heads=8, 2H+2L layers` → 14M params
 Target: `hidden_size=256, num_heads=4, 2H+2L layers` → ~3.4M params
@@ -24,7 +24,7 @@ num_heads: 4 # reduced from 8 (keeps head_dim=64)
 Even smaller than TRM (~5-7M). Strongest possible "less is more" claim if it works.
 Previous attempt with hidden_size=256 caused training collapse — lower LR (7e-5) might fix this.
 
-### 2. Hyperparameter Tuning — Prevent Overfitting
+### 2. Hyperparameter Tuning — Prevent Overfitting ✅
 
 SHREK is HRM-sized (14-27M), so it should use HRM's 1-GPU recipe, not TRM's.
 TRM gets away with lr=1e-4 because it's tiny (5-7M) — less capacity to overfit.
@@ -39,9 +39,7 @@ TRM gets away with lr=1e-4 because it's tiny (5-7M) — less capacity to overfit
 | EMA             | No         | No       | Yes        | Yes      |
 | weight_decay    | 1.0        | 1.0      | 1.0        | 1.0      |
 
-**SHREK current vs proposed:**
-
-**SHREK Sudoku — current vs proposed:**
+**SHREK Sudoku — current vs proposed:** ✅
 
 | Setting           | SHREK (current) | SHREK 2.0 (proposed) | Reason                                      |
 | ----------------- | --------------- | -------------------- | ------------------------------------------- |
@@ -51,24 +49,24 @@ TRM gets away with lr=1e-4 because it's tiny (5-7M) — less capacity to overfit
 | EMA               | Yes             | Yes                  | Keep — helps stability                       |
 | weight_decay      | 1.0             | 1.0                  | Same across all models                       |
 
-**SHREK Maze — current vs proposed:**
+**SHREK Maze — finding: already correct settings!**
 
 | Setting           | SHREK (current) | SHREK 2.0 (proposed) | Reason                                      |
 | ----------------- | --------------- | -------------------- | ------------------------------------------- |
-| lr                | 1e-4            | 1e-4                 | Same as HRM Maze and TRM Maze               |
-| global_batch_size | 768             | 128                  | Match HRM Maze and TRM Maze                 |
+| lr                | 1e-4            | 1e-4                 | Already matches HRM Maze and TRM Maze       |
+| global_batch_size | 128             | 128                  | Already matches HRM Maze and TRM Maze       |
 | epochs            | 20,000          | 20,000               | Same as all models                           |
 | EMA               | Yes             | Yes                  | Keep — helps stability                       |
 | weight_decay      | 1.0             | 1.0                  | Same across all models                       |
 
-Apply to ALL 7 training scripts:
+**Finding:** Maze scripts were already using batch=128 and lr=1e-4 (same as HRM/TRM).
+The Maze overfitting for SHREK Tiny is likely caused by the model being too large (14M)
+at hidden_size=512. The new hidden_size=256 (~3.4M) should fix this since smaller models
+overfit less. SHREK Large Maze (27M) is relatively stable (83% → 79%, minor decline).
 
-**Maze (2):**
+Applied to ALL 7 training scripts:
 
-- `models/SHREK-HRM/script/train/train_shrek_large_maze.sh`
-- `models/SHREK-HRM/script/train/train_shrek_tiny_maze.sh`
-
-**Ablation Sudoku (5):**
+**Sudoku (5) — lr and batch changed:** ✅
 
 - `models/SHREK-HRM/script/train/AblationStudy/train_shrek_large_sudoku_vanilla_full.sh`
 - `models/SHREK-HRM/script/train/AblationStudy/train_shrek_large_sudoku_vanilla_no_error.sh`
@@ -76,9 +74,14 @@ Apply to ALL 7 training scripts:
 - `models/SHREK-HRM/script/train/AblationStudy/train_shrek_large_sudoku_vanilla_no_both.sh`
 - `models/SHREK-HRM/script/train/AblationStudy/train_shrek_tiny_sudoku_vanilla.sh`
 
-### 3. Update W&B Project Names to V2
+**Maze (2) — only project name changed (settings already correct):** ✅
 
-Rename `project_name` in all scripts to track V2 runs separately in W&B:
+- `models/SHREK-HRM/script/train/train_shrek_large_maze.sh`
+- `models/SHREK-HRM/script/train/train_shrek_tiny_maze.sh`
+
+### 3. Update W&B Project Names to V2 ✅
+
+Renamed `project_name` in all scripts to track V2 runs separately in W&B:
 
 | Script | Current project_name | New project_name |
 |---|---|---|
