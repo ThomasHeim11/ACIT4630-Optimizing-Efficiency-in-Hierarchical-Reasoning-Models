@@ -2,73 +2,94 @@
 
 ## Problem
 
-SHREK models overfit on Sudoku after ~25k steps (accuracy crashes from 65% to ~8%).
-SHREK Tiny is currently 14M params (hidden_size=512) instead of the intended ~7M.
+1. SHREK models overfit on Sudoku after ~25k steps (accuracy crashes from 65% to ~8%)
+2. SHREK Tiny on Maze overfits after ~50k steps (73% drops to ~57%)
+3. SHREK Tiny is currently 14M params (hidden_size=512) instead of the intended ~7M
+4. Current SHREK uses HRM's 8-GPU settings (lr=1e-4) on 1 GPU — likely too aggressive
 
 ## Changes
 
 ### 1. SHREK Tiny — Reduce to ~7M Parameters
 
 Current: `hidden_size=512, num_heads=8, 2H+2L layers` → 14M params
-Target: `hidden_size=256, num_heads=4, 2H+2L layers` → ~7M params
+Target: `hidden_size=256, num_heads=4, 2H+2L layers` → ~3.4M params
 
 In `config/arch/shrek_tiny.yaml`:
+
 ```yaml
-hidden_size: 256   # reduced from 512
-num_heads: 4       # reduced from 8 (keeps head_dim=64)
+hidden_size: 256 # reduced from 512
+num_heads: 4 # reduced from 8 (keeps head_dim=64)
 ```
 
-This matches TRM's parameter range (~5-7M) for a fair "less is more" comparison.
-Previous attempt with hidden_size=256 caused training collapse — may need to investigate further.
+Even smaller than TRM (~5-7M). Strongest possible "less is more" claim if it works.
+Previous attempt with hidden_size=256 caused training collapse — lower LR (7e-5) might fix this.
 
 ### 2. Hyperparameter Tuning — Prevent Overfitting
 
-Current SHREK settings vs Original HRM:
+SHREK is HRM-sized (14-27M), so it should use HRM's 1-GPU recipe, not TRM's.
+TRM gets away with lr=1e-4 because it's tiny (5-7M) — less capacity to overfit.
 
-| Setting          | Original HRM | TRM     | SHREK (current) | SHREK 2.0 (proposed) |
-|------------------|-------------|---------|-----------------|---------------------|
-| lr               | 7e-5        | 1e-4    | 1e-4            | 7e-5                |
-| epochs (Sudoku)  | 20,000      | 40,000  | 40,000          | 40,000              |
-| global_batch_size| 384         | 768     | 768             | 384                 |
-| EMA              | No          | Yes     | Yes             | Yes                 |
-| weight_decay     | 1.0         | 1.0     | 1.0             | 1.0                 |
+**What we actually trained HRM and TRM with (our scripts):**
 
-Changes:
-- **lr: 1e-4 → 7e-5** — slower learning, less overfitting
-- **global_batch_size: 768 → 384** — match HRM's 1-GPU recipe
-- **epochs: keep at 40,000** — same as TRM for fair comparison
+| Setting         | HRM Sudoku | HRM Maze | TRM Sudoku | TRM Maze |
+| --------------- | ---------- | -------- | ---------- | -------- |
+| lr              | 7e-5       | 1e-4     | 1e-4       | 1e-4     |
+| batch_size      | 384        | 128      | 768        | 128      |
+| epochs          | 20,000     | 20,000   | 40,000     | 20,000   |
+| EMA             | No         | No       | Yes        | Yes      |
+| weight_decay    | 1.0        | 1.0      | 1.0        | 1.0      |
 
-### 3. Additional Options (if still overfitting)
+**SHREK current vs proposed:**
 
-- **Cosine LR decay:** Change `lr_min_ratio` from `1.0` to `0.1` in pretrain.py
-  - Currently LR stays constant after warmup — adding decay reduces updates late in training
-- **Early stopping:** Monitor `all.exact_accuracy` and save best checkpoint
+**SHREK Sudoku — current vs proposed:**
 
-## Expected Outcome
+| Setting           | SHREK (current) | SHREK 2.0 (proposed) | Reason                                      |
+| ----------------- | --------------- | -------------------- | ------------------------------------------- |
+| lr                | 1e-4            | 7e-5                 | Match HRM Sudoku 1-GPU recipe               |
+| global_batch_size | 768             | 384                  | Match HRM Sudoku 1-GPU recipe               |
+| epochs            | 40,000          | 40,000               | Keep same as TRM for fair comparison         |
+| EMA               | Yes             | Yes                  | Keep — helps stability                       |
+| weight_decay      | 1.0             | 1.0                  | Same across all models                       |
 
-- Accuracy holds at peak (~65% or higher) instead of collapsing
-- Fewer halting steps at peak checkpoint → lower GFLOPs
-- SHREK Tiny at 7M matching or beating Original HRM at 27M
-- Fair comparison: all models use same hyperparameters
+**SHREK Maze — current vs proposed:**
 
-## Reference: TRM Training Settings
+| Setting           | SHREK (current) | SHREK 2.0 (proposed) | Reason                                      |
+| ----------------- | --------------- | -------------------- | ------------------------------------------- |
+| lr                | 1e-4            | 1e-4                 | Same as HRM Maze and TRM Maze               |
+| global_batch_size | 768             | 128                  | Match HRM Maze and TRM Maze                 |
+| epochs            | 20,000          | 20,000               | Same as all models                           |
+| EMA               | Yes             | Yes                  | Keep — helps stability                       |
+| weight_decay      | 1.0             | 1.0                  | Same across all models                       |
 
-TRM also uses lr=1e-4, epochs=40,000, batch_size=768 but does not overfit because:
-- Much smaller model (5-7M params)
-- Model size itself acts as regularizer
+Apply to ALL 7 training scripts:
 
-## How to Run
+**Maze (2):**
 
-```bash
-# On cluster
-module load slurm
-cd ~/HMR
+- `models/SHREK-HRM/script/train/train_shrek_large_maze.sh`
+- `models/SHREK-HRM/script/train/train_shrek_tiny_maze.sh`
 
-# Retrain SHREK with new settings
-sbatch models/SHREK-HRM/script/train/AblationStudy/train_shrek_large_sudoku_v2.sh
-sbatch models/SHREK-HRM/script/train/AblationStudy/train_shrek_tiny_sudoku_v2.sh
+**Ablation Sudoku (5):**
 
-# Monitor
-squeue -u thheim
-tail -f /home/thheim/HMR/logs/shrek_*_JOBID.log
-```
+- `models/SHREK-HRM/script/train/AblationStudy/train_shrek_large_sudoku_vanilla_full.sh`
+- `models/SHREK-HRM/script/train/AblationStudy/train_shrek_large_sudoku_vanilla_no_error.sh`
+- `models/SHREK-HRM/script/train/AblationStudy/train_shrek_large_sudoku_vanilla_no_stagnation.sh`
+- `models/SHREK-HRM/script/train/AblationStudy/train_shrek_large_sudoku_vanilla_no_both.sh`
+- `models/SHREK-HRM/script/train/AblationStudy/train_shrek_tiny_sudoku_vanilla.sh`
+
+### 3. Update W&B Project Names to V2
+
+Rename `project_name` in all scripts to track V2 runs separately in W&B:
+
+| Script | Current project_name | New project_name |
+|---|---|---|
+| `train_shrek_large_maze.sh` | HRM_Maze_Comparison | HRM_Maze_Comparison_V2 |
+| `train_shrek_tiny_maze.sh` | HRM_Maze_Comparison | HRM_Maze_Comparison_V2 |
+| `train_shrek_large_sudoku_vanilla_full.sh` | SHREK_Ablation_Sudoku | SHREK_Ablation_Sudoku_V2 |
+| `train_shrek_large_sudoku_vanilla_no_error.sh` | SHREK_Ablation_Sudoku | SHREK_Ablation_Sudoku_V2 |
+| `train_shrek_large_sudoku_vanilla_no_stagnation.sh` | SHREK_Ablation_Sudoku | SHREK_Ablation_Sudoku_V2 |
+| `train_shrek_large_sudoku_vanilla_no_both.sh` | SHREK_Ablation_Sudoku | SHREK_Ablation_Sudoku_V2 |
+| `train_shrek_tiny_sudoku_vanilla.sh` | SHREK_Ablation_Sudoku | SHREK_Ablation_Sudoku_V2 |
+
+### 4. Additional Options
+
+- Early stopping (manual: pick best checkpoint from W&B)
