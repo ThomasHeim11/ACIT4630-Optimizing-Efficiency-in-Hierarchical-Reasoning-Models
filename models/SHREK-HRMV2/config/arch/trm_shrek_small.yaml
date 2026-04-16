@@ -1,0 +1,35 @@
+# SHREK V2 Small — TRM Attention + self-correction (~3.4M params)
+# Same as trm_shrek.yaml but with reduced hidden_size=256.
+
+name: recursive_reasoning.trm@TinyRecursiveReasoningModel_ACTV1
+loss:
+  name: losses@ACTLossHead
+  loss_type: stablemax_cross_entropy
+
+halt_exploration_prob: 0.1
+halt_max_steps: 16
+
+H_cycles: 3
+L_cycles: 6
+
+H_layers: 0
+L_layers: 2
+
+hidden_size: 256
+num_heads: 4
+expansion: 4
+
+puzzle_emb_ndim: ${.hidden_size}
+
+pos_encodings: rope
+forward_dtype: bfloat16
+
+mlp_t: False
+puzzle_emb_len: 16
+no_ACT_continue: True
+
+# SHREK V2 components
+enable_error_injection: true
+enable_stagnation_delta: true
+alpha_max: 0.01
+alpha_warmup_steps: 5000
