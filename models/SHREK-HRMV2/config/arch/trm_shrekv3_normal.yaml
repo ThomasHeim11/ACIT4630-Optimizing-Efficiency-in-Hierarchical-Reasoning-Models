@@ -1,0 +1,36 @@
+# SHREK V3 Normal — TRM Attention + self-gated error injection (~7M params)
+# Same parameter count as TRM-Att baseline; SHREK adds only ~1.5k params
+# (error_encoder + error_estimator). Effectively a free upgrade.
+# One mechanism: error injection magnitude is per-sample, gated by the learned
+# uncertainty estimate. No warmup, no schedule, no stagnation delta.
+
+name: recursive_reasoning.trm@TinyRecursiveReasoningModel_ACTV1
+loss:
+  name: losses@ACTLossHead
+  loss_type: stablemax_cross_entropy
+
+halt_exploration_prob: 0.1
+halt_max_steps: 16
+
+H_cycles: 3
+L_cycles: 6
+
+H_layers: 0
+L_layers: 2
+
+hidden_size: 512
+num_heads: 8
+expansion: 4
+
+puzzle_emb_ndim: ${.hidden_size}
+
+pos_encodings: rope
+forward_dtype: bfloat16
+
+mlp_t: False
+puzzle_emb_len: 16
+no_ACT_continue: True
+
+# SHREK V3 components
+enable_error_injection: true
+alpha_max: 0.01

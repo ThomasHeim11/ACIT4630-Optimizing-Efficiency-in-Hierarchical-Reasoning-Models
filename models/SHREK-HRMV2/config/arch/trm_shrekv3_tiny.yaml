@@ -1,0 +1,34 @@
+# SHREK V3 Tiny — TRM Attention + self-gated error injection (~2M params)
+# Same as trm_shrekv3_normal.yaml but hidden_size=256, num_heads=4. Aimed at
+# beating the 27M original HRM (55% Sudoku / 74.5% Maze) with ~13× fewer params.
+
+name: recursive_reasoning.trm@TinyRecursiveReasoningModel_ACTV1
+loss:
+  name: losses@ACTLossHead
+  loss_type: stablemax_cross_entropy
+
+halt_exploration_prob: 0.1
+halt_max_steps: 16
+
+H_cycles: 3
+L_cycles: 6
+
+H_layers: 0
+L_layers: 2
+
+hidden_size: 256
+num_heads: 4
+expansion: 4
+
+puzzle_emb_ndim: ${.hidden_size}
+
+pos_encodings: rope
+forward_dtype: bfloat16
+
+mlp_t: False
+puzzle_emb_len: 16
+no_ACT_continue: True
+
+# SHREK V3 components
+enable_error_injection: true
+alpha_max: 0.01

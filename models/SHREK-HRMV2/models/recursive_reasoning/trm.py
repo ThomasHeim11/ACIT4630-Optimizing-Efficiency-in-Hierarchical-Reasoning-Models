@@ -63,11 +63,10 @@ class TinyRecursiveReasoningModel_ACTV1Config(BaseModel):
     puzzle_emb_len: int = 16 # if non-zero, its specified to this value
     no_ACT_continue: bool =  True # No continue ACT loss, only use the sigmoid of the halt which makes much more sense
 
-    # SHREK V2: self-correction components
+    # SHREK V3: self-correction via self-gated error injection.
+    # Stagnation delta removed — V2 reproducibility lives on the SHREKV2 branch.
     enable_error_injection: bool = False
-    enable_stagnation_delta: bool = False
     alpha_max: float = 0.01
-    alpha_warmup_steps: int = 5000
 
 class TinyRecursiveReasoningModel_ACTV1Block(nn.Module):
     def __init__(self, config: TinyRecursiveReasoningModel_ACTV1Config) -> None:
@@ -136,9 +135,7 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.vocab_size, bias=False)
 
-        # SHREK V2: Q-head input is hidden_size + 1 if stagnation delta enabled
-        q_input_size = self.config.hidden_size + (1 if self.config.enable_stagnation_delta else 0)
-        self.q_head       = CastedLinear(q_input_size, 2, bias=True)
+        self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True)
 
         self.puzzle_emb_len = -(self.config.puzzle_emb_ndim // -self.config.hidden_size)  if self.config.puzzle_emb_len == 0 else self.config.puzzle_emb_len  # ceil div
         if self.config.puzzle_emb_ndim > 0:
@@ -163,11 +160,13 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
         self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
 
-        # SHREK V2: error injection components
+        # SHREK V3: error injection components
+        # error_estimator: predicts normalized LM loss from z_H; trained via aux_loss.
+        # error_encoder: embeds the scalar uncertainty signal into hidden_size space.
+        # Alpha is per-sample gated by learned_err at runtime — no warmup buffer, no schedule.
         if self.config.enable_error_injection:
             self.error_encoder = nn.Linear(1, self.config.hidden_size)
             self.error_estimator = nn.Linear(self.config.hidden_size, 1)
-            self._alpha_step = nn.Buffer(torch.tensor(0.0), persistent=True)
 
         # Q head special init
         # Init Q to (almost) zero for faster learning during bootstrapping
@@ -236,40 +235,25 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         # LM Outputs
         output = self.lm_head(z_H)[:, self.puzzle_emb_len:]
 
-        # SHREK V2: error signal computation
+        # SHREK V3: self-gated error injection — learned uncertainty only, no schedule, no flip-rate
         learned_err = None
+        current_pred = output.detach().argmax(dim=-1)  # (B, seq_len) — kept for carry.prev_pred
         if self.config.enable_error_injection:
-            # 5a. Flip rate: fraction of tokens that changed vs previous step
-            current_pred = output.detach().argmax(dim=-1)  # (B, seq_len)
-            flip_err = (current_pred != carry.prev_pred).float().mean(dim=-1)  # (B,)
-
-            # 5b. Learned error: predict how wrong the model is from z_H
+            # Learned uncertainty estimate — single signal that drives both content and strength.
             z_H_mean = z_H[:, self.puzzle_emb_len:].mean(dim=1).detach()  # (B, hidden_size)
             learned_err = torch.sigmoid(self.error_estimator(z_H_mean.float())).squeeze(-1)  # (B,)
 
-            # 5c. Combined error signal
-            error = 0.5 * flip_err + 0.5 * learned_err  # (B,)
+            # Error content: encode the uncertainty estimate into hidden space.
+            error_emb = self.error_encoder(learned_err.unsqueeze(-1))  # (B, hidden_size)
 
-            # 5d. Inject error into z_H (affects carry for next step)
-            error_emb = self.error_encoder(error.unsqueeze(-1))  # (B, hidden_size)
-            with torch.no_grad():
-                if self.training:
-                    self._alpha_step += 1
-                alpha = self.config.alpha_max * torch.clamp(self._alpha_step / self.config.alpha_warmup_steps, max=1.0)
+            # Per-sample gated alpha: hard samples inject full, confident ones near zero.
+            # No warmup, no decay — gate is the model's own uncertainty.
+            alpha_per_sample = self.config.alpha_max * learned_err.detach().clamp(0, 1)  # (B,)
             scale = math.sqrt(self.config.hidden_size)
-            z_H = z_H + alpha * error_emb.unsqueeze(1) / scale  # (B, seq_len+emb, hidden_size)
-        else:
-            current_pred = output.detach().argmax(dim=-1)
+            z_H = z_H + alpha_per_sample.view(-1, 1, 1) * error_emb.unsqueeze(1) / scale  # (B, seq_len+emb, hidden_size)
 
-        # SHREK V2: Q-head with optional stagnation delta
-        if self.config.enable_stagnation_delta:
-            z_H_f = z_H.detach().float()
-            z_H_start = carry.z_H.detach().float()
-            delta = torch.norm(z_H_f - z_H_start, dim=(1, 2)) / (torch.norm(z_H_start, dim=(1, 2)) + 1e-6)  # (B,)
-            q_input = torch.cat([z_H[:, 0].to(torch.float32), delta.unsqueeze(-1)], dim=-1)  # (B, hidden_size+1)
-        else:
-            q_input = z_H[:, 0].to(torch.float32)  # (B, hidden_size)
-        q_logits = self.q_head(q_input).to(torch.float32)  # (B, 2)
+        # Q-head (SHREK V3: no stagnation delta; plain z_H[:, 0])
+        q_logits = self.q_head(z_H[:, 0].to(torch.float32)).to(torch.float32)  # (B, 2)
 
         # SHREK V2: New carry with prev_pred
         new_carry = TinyRecursiveReasoningModel_ACTV1InnerCarry(
