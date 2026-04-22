@@ -97,16 +97,23 @@ class ACTLossHead(nn.Module):
 
             metrics["q_continue_loss"] = q_continue_loss.detach()
 
-        # SHREK V2: auxiliary loss — trains error_estimator to predict per-sample LM loss
+        # SHREK: auxiliary loss — trains error_estimator to predict per-TOKEN normalized LM loss.
+        # Target is built per cell, not per puzzle, so the estimator's (B, L) output aligns
+        # with its supervision. Invalid (masked/padding) positions get target 0 so the
+        # estimator learns to output ~0 there and the injection gate stays closed.
+        # This is the aux_loss's only job — the injection path in trm.py is gradient-isolated
+        # from this objective, which is what keeps late-training dynamics stable.
         aux_loss = 0
         if "learned_err" in outputs:
-            # Per-sample LM loss (not reduced)
-            per_sample_lm_loss = (self.loss_fn(outputs["logits"], labels, ignore_index=IGNORE_LABEL_ID, valid_mask=mask) / loss_divisor).sum(-1)  # (B,)
+            # Per-token LM loss (B, L), NOT reduced over the sequence dimension.
+            per_token_lm_loss = self.loss_fn(outputs["logits"], labels, ignore_index=IGNORE_LABEL_ID, valid_mask=mask) / loss_divisor  # (B, L)
             with torch.no_grad():
-                # Normalize to [0, 1] for MSE target
-                lm_min = per_sample_lm_loss.min()
-                lm_max = per_sample_lm_loss.max()
-                normalized_lm_loss = (per_sample_lm_loss - lm_min) / (lm_max - lm_min + 1e-8)
+                # Normalize to [0, 1] per batch using the max over valid positions.
+                valid = (labels != IGNORE_LABEL_ID)  # (B, L)
+                lm_max = per_token_lm_loss[valid].max().clamp(min=1e-8) if valid.any() else torch.tensor(1.0, device=per_token_lm_loss.device)
+                normalized_lm_loss = (per_token_lm_loss / lm_max).clamp(0, 1)
+                # Zero out invalid positions so the estimator learns to close the gate there.
+                normalized_lm_loss = torch.where(valid, normalized_lm_loss, torch.zeros_like(normalized_lm_loss))
             aux_loss = 0.1 * F.mse_loss(outputs["learned_err"], normalized_lm_loss.detach(), reduction="sum")
             metrics["aux_loss"] = aux_loss.detach()
 

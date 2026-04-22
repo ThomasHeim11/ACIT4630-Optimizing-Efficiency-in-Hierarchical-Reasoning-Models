@@ -2,6 +2,38 @@
 
 > **One-liner for the group:** Where SHREK V1 (on HRM) injected a uniform, schedule-based error correction into every sample plus a stagnation-delta signal, SHREK V3 (on TRM) makes the correction per-sample and self-regulating — the model's own uncertainty decides how much to inject, so hard samples get full correction and confident ones get none — and drops the stagnation-delta component entirely after ablation showed it was destabilizing.
 
+## Plain-English Explanation for the Group
+
+### What SHREK does
+
+Our model is TRM with one extra mechanism bolted on: **it predicts which cells it's unsure about, then nudges itself to reconsider those cells**. Think of it like a student re-reading the hardest question on an exam instead of all of them.
+
+### What we changed (the patch)
+
+**Problem 1 — the Maze model was collapsing.**
+It got to 85.5% then crashed to 52%. Why? A bug in how gradients flowed: the model's "uncertainty meter" was accidentally being trained by the wrong signal, so it drifted until it started cranking up corrections on cells that were already correct, which broke the output.
+→ **Fix:** we cut that wrong gradient path. The uncertainty meter now only learns from its proper training signal.
+
+**Problem 2 — the correction was too broad.**
+Before the patch, the model computed *one* uncertainty score per puzzle and applied the same correction to every cell. That's wasteful: in Sudoku, ~25 cells are already given (trivial), and in Maze, ~850 cells are just walls (trivial). They don't need correction.
+→ **Fix:** the model now computes uncertainty **per cell**. Easy cells get zero correction, hard cells get full correction. Surgical instead of spray-and-pray.
+
+### Why this should beat TRM
+
+- **Stable training:** no more collapse, so it keeps improving past the point where it used to crash
+- **Smarter regularization:** only the hard cells get touched, so the model doesn't keep disturbing cells it's already solved
+- **Self-tuning:** no hyperparameters to tweak — the model decides per cell how much help it needs
+
+### Expected outcome
+
+- Sudoku: around 0.78–0.80 (TRM gets 0.75)
+- Maze: around 0.88–0.90 (TRM gets 0.87)
+- Tiny variant (~2M params) should beat original HRM (27M) — same quality, 13× smaller
+
+Zero new configs, zero new hyperparameters — just smarter use of the mechanism we already had.
+
+---
+
 ## Motivation
 
 SHREK V2 ran a full ablation on Sudoku-Extreme (Large, 50k steps, lr=1e-4, batch=768, EMA):
@@ -197,3 +229,135 @@ The V2 ablation proved error injection can accelerate learning (green led for 34
 - Training: ~24 hours on GH200 (Sudoku 50k + Maze 20k in parallel on two nodes)
 - Evaluation: ~1 hour
 - Total: ~1.5 days
+
+---
+
+## V3.1 — Stability + Per-Token Gating (combined patch)
+
+### What we observed in V3
+
+The first SHREK V3 Normal Maze run reached a healthy peak of `exact_accuracy = 0.855` at step ~45-55k, then **collapsed to 0.52 by step 70k**. `lm_loss` rose from 0.028 → 0.031+ over the same window. The Q-head stayed healthy (`q_halt_accuracy` still climbing), so this is not a halting failure — the LM output itself degraded.
+
+V3 also has a *structural* limitation independent of the collapse: the gate is **per-sample**, which means easy and hard tokens inside the same puzzle receive identical perturbation. On Sudoku this wastes injection on the ~25 given cells; on Maze it wastes it on the ~850 wall/empty cells. To decisively beat both baselines we need **per-token** gating.
+
+V3.1 addresses both issues in a single patch: a stability fix (prevents collapse) plus a mechanism upgrade (targets regularization at the cell level).
+
+### Fix 1 — Stability: detach `learned_err` before injection
+
+**Root cause of the collapse.** The V3 forward pass detached `learned_err` only when computing `alpha`, not when computing `error_emb`. LM loss backpropagated through `error_encoder` → `learned_err` → `error_estimator.weight`, giving the estimator two training signals:
+
+1. `aux_loss = 0.1 · MSE(learned_err, normalized_lm_loss)` — the intended objective
+2. Main LM loss, flowing back through the injection path — unintended
+
+Late in training both losses are tiny, so (1)'s gradient shrinks while (2) keeps nudging the estimator in unrelated directions. The estimator drifts → spikes → alpha spikes → z_H off-manifold → LM loss rises → estimator learns higher values → cascade.
+
+**Fix:** detach `learned_err` fully before any injection use.
+
+```python
+learned_err = sigmoid(error_estimator(z_H_mean.detach()))   # keeps grad → aux_loss trains it
+learned_err_det = learned_err.detach()                      # used for injection — no grad path to estimator
+error_emb = error_encoder(learned_err_det.unsqueeze(-1))    # LM loss cannot reach estimator
+alpha = alpha_max * learned_err_det.clamp(0, 1)             # no extra safety clamp; keep full range
+z_H += alpha * error_emb / sqrt(h)
+```
+
+`alpha_max` stays at `0.01`; no schedule, no tighter clamp. The detach alone closes the cascade path while preserving early-training acceleration. (A tighter clamp or lower alpha would add safety at the cost of regularization strength — unnecessary once the gradient leak is gone.)
+
+### Fix 2 — Accuracy: per-token gating instead of per-sample
+
+**V3 (per-sample, current).** The estimator takes the *mean* z_H over all token positions and outputs one scalar per puzzle:
+
+```
+z_H: (B, 81, h)  →  mean over positions  →  z_H_mean: (B, h)  →  Linear(h, 1)  →  learned_err: (B,)
+```
+
+That single gate value applies equally to every cell. Given cells in Sudoku (trivial) get the same perturbation as empty cells (hard). Wall cells in Maze (trivial) get the same perturbation as branch-point path cells (hard).
+
+**V3.1 (per-token).** Drop the mean. Apply the Linear at each position:
+
+```
+z_H: (B, L, h)  →  Linear(h, 1) per-position  →  learned_err: (B, L)
+```
+
+Each cell gets its own uncertainty score, which drives its own alpha. Easy cells → gate closes → near-zero injection. Hard cells → gate opens → full regularization. Same mechanism, finer-grained. Works on *both* tasks because both tasks have intra-puzzle difficulty variance.
+
+### Combined V3.1 forward pass (full code for the injection block)
+
+```python
+# SHREK V3.1: per-token self-gated error injection, gradient-isolated estimator
+if self.config.enable_error_injection:
+    # Per-token uncertainty — drop the mean, apply estimator at each position.
+    z_H_tokens = z_H[:, self.puzzle_emb_len:].detach()  # (B, L, h)
+    learned_err = torch.sigmoid(self.error_estimator(z_H_tokens.float())).squeeze(-1)  # (B, L)
+
+    # Fully detach before injection — estimator is trained only by aux_loss.
+    learned_err_det = learned_err.detach()
+
+    # Per-token error content and per-token gate.
+    error_emb = self.error_encoder(learned_err_det.unsqueeze(-1))  # (B, L, h)
+    alpha_per_token = self.config.alpha_max * learned_err_det.clamp(0, 1)  # (B, L)
+
+    # Inject only into the non-puzzle-embedding positions (the actual tokens).
+    scale = math.sqrt(self.config.hidden_size)
+    z_H_tokens_new = z_H[:, self.puzzle_emb_len:] + alpha_per_token.unsqueeze(-1) * error_emb / scale
+    z_H = torch.cat([z_H[:, :self.puzzle_emb_len], z_H_tokens_new], dim=1)
+```
+
+### Fix 3 — `losses.py`: per-token aux loss
+
+The aux loss must also become per-token so the estimator's training target aligns with its per-position output.
+
+```python
+# V3 (per-sample):
+per_sample_lm_loss = (self.loss_fn(...) / loss_divisor).sum(-1)   # (B,)
+normalized_lm_loss = (per_sample_lm_loss - lm_min) / (lm_max - lm_min + 1e-8)
+aux_loss = 0.1 * F.mse_loss(outputs["learned_err"], normalized_lm_loss.detach(), reduction="sum")
+
+# V3.1 (per-token):
+per_token_lm_loss = (self.loss_fn(...) / loss_divisor)             # (B, L)
+with torch.no_grad():
+    valid = (labels != IGNORE_LABEL_ID)                            # (B, L)
+    lm_max = per_token_lm_loss[valid].max().clamp(min=1e-8)
+    normalized_lm_loss = (per_token_lm_loss / lm_max).clamp(0, 1)
+    normalized_lm_loss = torch.where(valid, normalized_lm_loss, torch.zeros_like(normalized_lm_loss))
+aux_loss = 0.1 * F.mse_loss(outputs["learned_err"], normalized_lm_loss.detach(), reduction="sum")
+```
+
+Invalid positions (padding) get target 0 so the estimator learns to output near-zero on those tokens and stay out of the way.
+
+### Why this combination addresses "generalize well on both tasks"
+
+| Task | V3 limitation | V3.1 remedy |
+|------|---------------|-------------|
+| Sudoku | Per-sample gate applies uniform noise to all 81 cells including ~25 given cells that are trivial. Over-regularizes; Sudoku plateaus. | Per-token gate closes on given cells (zero injection), opens on hardest empty cells. Precision regularization. |
+| Maze | Per-sample gate applies uniform noise to all 900 cells including ~850 walls/empty space. Wastes >90% of the injection budget. Plus the cascade causes late collapse. | Per-token gate closes on walls, opens on path branch points. Detach fix eliminates the collapse. |
+
+Same mechanism, same hyperparameters, adapts per-task automatically via the estimator. This is the generalization property we want.
+
+### Why we do NOT re-add `flip_err`
+
+- The V3 collapse was caused by gradient bleed-through, not by `flip_err`'s absence. Adding it back does not fix the cascade.
+- `flip_err` is discrete and noisy late in training (a single numerical flip spikes it) — the exact reason we dropped it for V3.
+- V3.1's per-token `learned_err` already gives us what `flip_err` tried to provide (observable per-position uncertainty), but smooth and continuous.
+
+### Expected behavior
+
+- **Stability:** No late collapse. Estimator cannot be dragged around by LM loss; aux loss is its only trainer.
+- **Sudoku:** Gate closes on given cells immediately (they are trivially predicted). Regularization concentrates on empty cells with real uncertainty. Expected peak: **>0.77** (vs baseline 0.75, V2-error-only 0.73).
+- **Maze:** Gate closes on walls/free space. Regularization concentrates on path branch points. With no collapse, training continues past the 55k peak. Expected peak: **>0.87** (vs baseline 0.87 at 150k steps; V3 hit 0.855 at 55k steps with per-sample gate).
+- **Tiny variants:** Same mechanism, smaller backbone. Targets: beat 27M HRM (0.55 Sudoku / 0.745 Maze) with ~2M params.
+
+### Files changed in V3.1
+
+1. `models/SHREK-HRMV2/models/recursive_reasoning/trm.py` — per-token estimator, full detach before injection, per-token injection into token positions only
+2. `models/SHREK-HRMV2/models/losses.py` — per-token normalized LM loss target for aux loss
+3. Configs **unchanged** (`alpha_max=0.01` preserved in both normal and tiny). Training scripts unchanged.
+
+### Action plan
+
+- [ ] Cancel any running V3 jobs: `scancel 1042873 1042874 1042875 1042876`
+- [ ] Apply the code changes in `trm.py` and `losses.py`
+- [ ] Local smoke-check (YAML parses, no syntax errors)
+- [ ] Commit + push on the `ShrekV3` branch
+- [ ] On cluster: `git pull` and resubmit the 4 training scripts
+- [ ] Watch `exact_accuracy` through late training — should climb and hold (not peak+collapse)

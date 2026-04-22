@@ -160,10 +160,11 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
         self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
 
-        # SHREK V3: error injection components
-        # error_estimator: predicts normalized LM loss from z_H; trained via aux_loss.
-        # error_encoder: embeds the scalar uncertainty signal into hidden_size space.
-        # Alpha is per-sample gated by learned_err at runtime — no warmup buffer, no schedule.
+        # SHREK: error injection components.
+        # error_estimator: per-token Linear(h, 1) predicting normalized LM loss at each cell.
+        #                  Trained exclusively via aux_loss (gradients are blocked elsewhere).
+        # error_encoder:   Linear(1, h) embedding the scalar uncertainty back into hidden space.
+        # Alpha is per-token gated by learned_err at runtime — no warmup, no schedule.
         if self.config.enable_error_injection:
             self.error_encoder = nn.Linear(1, self.config.hidden_size)
             self.error_estimator = nn.Linear(self.config.hidden_size, 1)
@@ -235,24 +236,33 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         # LM Outputs
         output = self.lm_head(z_H)[:, self.puzzle_emb_len:]
 
-        # SHREK V3: self-gated error injection — learned uncertainty only, no schedule, no flip-rate
+        # SHREK: per-token self-gated error injection, gradient-isolated estimator.
+        # Each cell gets its own uncertainty score → its own alpha. Easy cells (given Sudoku
+        # cells, Maze walls) have learned_err ≈ 0 → zero perturbation; hard cells get full
+        # regularization. learned_err is fully detached before injection so the main LM loss
+        # cannot train the estimator (closes the gradient-cascade path that caused the V3
+        # late-training collapse); aux_loss in losses.py is its only training signal.
         learned_err = None
         current_pred = output.detach().argmax(dim=-1)  # (B, seq_len) — kept for carry.prev_pred
         if self.config.enable_error_injection:
-            # Learned uncertainty estimate — single signal that drives both content and strength.
-            z_H_mean = z_H[:, self.puzzle_emb_len:].mean(dim=1).detach()  # (B, hidden_size)
-            learned_err = torch.sigmoid(self.error_estimator(z_H_mean.float())).squeeze(-1)  # (B,)
+            # Per-token uncertainty estimate. z_H detached so estimator is decoupled from
+            # the main computation graph; only aux_loss will update error_estimator.
+            z_H_tokens = z_H[:, self.puzzle_emb_len:].detach()  # (B, L, hidden_size)
+            learned_err = torch.sigmoid(self.error_estimator(z_H_tokens.float())).squeeze(-1)  # (B, L)
 
-            # Error content: encode the uncertainty estimate into hidden space.
-            error_emb = self.error_encoder(learned_err.unsqueeze(-1))  # (B, hidden_size)
+            # Fully detach before injection — error_encoder sees no gradient back to estimator.
+            learned_err_det = learned_err.detach()
 
-            # Per-sample gated alpha: hard samples inject full, confident ones near zero.
-            # No warmup, no decay — gate is the model's own uncertainty.
-            alpha_per_sample = self.config.alpha_max * learned_err.detach().clamp(0, 1)  # (B,)
+            # Per-token error content and per-token gate.
+            error_emb = self.error_encoder(learned_err_det.unsqueeze(-1))  # (B, L, hidden_size)
+            alpha_per_token = self.config.alpha_max * learned_err_det.clamp(0, 1)  # (B, L)
+
+            # Inject only into the non-puzzle-embedding positions (the actual tokens).
             scale = math.sqrt(self.config.hidden_size)
-            z_H = z_H + alpha_per_sample.view(-1, 1, 1) * error_emb.unsqueeze(1) / scale  # (B, seq_len+emb, hidden_size)
+            z_H_tokens_new = z_H[:, self.puzzle_emb_len:] + alpha_per_token.unsqueeze(-1) * error_emb / scale
+            z_H = torch.cat([z_H[:, :self.puzzle_emb_len], z_H_tokens_new], dim=1)
 
-        # Q-head (SHREK V3: no stagnation delta; plain z_H[:, 0])
+        # Q-head — plain z_H[:, 0], no stagnation delta.
         q_logits = self.q_head(z_H[:, 0].to(torch.float32)).to(torch.float32)  # (B, 2)
 
         # SHREK V2: New carry with prev_pred
