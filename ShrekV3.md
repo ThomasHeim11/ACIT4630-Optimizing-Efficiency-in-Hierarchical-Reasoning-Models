@@ -361,3 +361,98 @@ Same mechanism, same hyperparameters, adapts per-task automatically via the esti
 - [ ] Commit + push on the `ShrekV3` branch
 - [ ] On cluster: `git pull` and resubmit the 4 training scripts
 - [ ] Watch `exact_accuracy` through late training — should climb and hold (not peak+collapse)
+
+---
+
+## V3.2 — Explore-then-Commit (skip injection on the final ACT step)
+
+### What we observed in V3.1
+
+V3.1 fixed the catastrophic V3 collapse (Maze 0.855→0.52). Stability improved drastically. But on the final 50k-step Sudoku and 150k-step Maze runs, two patterns remain:
+
+| Run | Final exact_accuracy | TRM baseline | Gap | Late-training symptom |
+|---|---|---|---|---|
+| **Normal Maze** | 0.86 (peak 0.88) | 0.87 | +0.01 / −0.01 | One large dip to 0.31 at step ~70k; smaller oscillation throughout |
+| **Normal Sudoku** | 0.67 | 0.71 | −0.04 | `all.q_halt_loss` rising 0.005 → 0.06 in last 20k steps; exact_accuracy plateau |
+
+Both runs share the same diagnosis: **`q_halt_loss` rises late in training**. This is residual Q-learning instability — smaller than the V3 cascade, but still drags down the final number. When Q-targets drift, the halt head sometimes stops too early (delivering a wrong-but-confident answer) or runs the full ACT budget when it shouldn't, and both cases hurt eval accuracy.
+
+### Root cause: Q-head sees a moving target at decision time
+
+Each ACT step ends with `z_H` *plus* a per-token injection `alpha · error_emb / √h`. The Q-head reads `z_H[:, 0]` to decide halt vs continue. When `learned_err > 0` on uncertain cells, the injected noise propagates through the network and reaches `z_H[:, 0]`. The Q-head is trying to learn:
+
+> "Given this state, should I commit or keep reasoning?"
+
+But the *state itself* is being perturbed at the moment of decision. The Q-target Q-learning bootstraps from is built from a noisy `z_H` and a noisy next-step `z_H`. With no target network and no replay buffer, those noisy targets compound — the q_halt_loss rises slowly even after V3.1's gradient fix.
+
+The Q-head needs a clean, stationary signal at the decision step.
+
+### Mechanism: explore early, commit late
+
+Inside one inner forward call (one ACT step), the model runs `H_cycles × L_cycles` of reasoning, then injects noise into `z_H`, then the LM head and Q-head read the result. We want to keep injection during exploration but disable it on the *final* ACT step — the step where the model commits its answer.
+
+Concretely:
+
+```
+# Pseudocode (placement inside _Inner.forward, after the reasoning loops)
+if enable_error_injection:
+    learned_err   = sigmoid(error_estimator(z_H_tokens.detach()))   # (B, L) — for aux loss
+    alpha         = alpha_max * learned_err.detach().clamp(0, 1)    # (B, L)
+    if is_last_step is not None:
+        # Zero alpha for samples on their commit step → no injection on those samples.
+        alpha = alpha * (~is_last_step).to(alpha.dtype).view(-1, 1)
+    z_H = z_H + alpha · error_encoder(learned_err) / sqrt(h)
+```
+
+`is_last_step: (B,) bool` is computed in the outer ACT wrapper (where the step counter lives) and passed into the inner forward. It's true for any sample whose step counter is about to reach `halt_max_steps`. During eval, all samples run the full budget, so it fires on the literal final inner call. During training, it fires only for samples that have used their full ACT budget without halting.
+
+### Why this works (three reasons)
+
+1. **Q-head decisions become Q-head trainable.** On the commit step, `z_H[:, 0]` is the unmodified output of the reasoning trunk. Q-target = Q on that clean state. With consistent, low-variance Q-targets, `q_halt_loss` stops rising, halting decisions become reliable, and the late-training dip vanishes.
+2. **No accuracy is lost.** All exploration steps (1 .. halt_max_steps − 1) still get full per-token injection — the regularization mechanism that drove V3.1's early gains continues to operate. We're only removing the *one* perturbation that was directly contaminating the decision input.
+3. **It's intrinsic to the design, not a hyperparameter band-aid.** "Explore with noise, commit without it" is a classic stochastic-search pattern (e.g., simulated annealing, ε-greedy). It composes naturally with self-gating: easy cells have alpha ≈ 0 throughout (gate closed), hard cells get full alpha during exploration (gate open) but alpha = 0 on commit (override).
+
+### Why this addresses BOTH Maze and Sudoku
+
+| Task | V3.1 issue | V3.2 expected effect |
+|------|-------------|----------------------|
+| **Maze** | Big dip at 70k tied to `q_halt_loss` spike to 0.95. Q-head temporarily makes wrong halt decisions, accuracy crashes to 0.31 before recovering. | Halt decisions trained on clean states stop spiking. Single-shot dips disappear. Final accuracy converges near peak (~0.88) instead of oscillating. Clean win over TRM 0.87. |
+| **Sudoku** | `q_halt_loss` rises 0.005→0.06 over last 20k steps. Halt timing degrades on hardest puzzles. Plateau at 0.67. | Stable halt timing late in training → model uses correct ACT budget per puzzle → harder puzzles get the full 16 steps without injection contamination on the final step → exact_accuracy keeps climbing past 0.67 toward TRM's 0.71+. |
+
+Same compute budget. Same epochs. One mechanism change.
+
+### Why we are NOT doing other things
+
+- **NOT changing alpha_max** — self-gating already does the right per-cell modulation; the issue isn't injection magnitude on hard cells, it's injection *timing* relative to the halt decision.
+- **NOT changing `epochs`** — fair-comparison constraint stands. SHREK must beat TRM at TRM's compute budget to be a clean claim.
+- **NOT adding a target network or replay buffer** — those are big architectural changes; the explore-then-commit fix is a 3-line change that addresses the same instability with much less code.
+- **NOT decaying alpha across ACT steps within a single forward** — coarser version of the same idea; clean on/off at the commit step is simpler and more interpretable.
+- **NOT reintroducing flip_err** — orthogonal to the Q-stability problem.
+
+### Files to change
+
+1. `models/SHREK-HRMV2/models/recursive_reasoning/trm.py`
+   - `_Inner.forward` signature: add `is_last_step: Optional[torch.Tensor] = None`
+   - Inside the injection block: zero `alpha_per_token` for samples where `is_last_step` is true
+   - Outer `forward`: compute `will_be_last_step = (new_steps + 1) >= halt_max_steps` and pass to inner
+
+No config changes. No script changes. No new hyperparameters. Same 4 training scripts resubmit as-is.
+
+### Expected outcome
+
+| Run | V3.1 result | V3.2 target | TRM | Verdict if hit |
+|-----|-------------|-------------|-----|----------------|
+| Normal Maze | 0.86 (peak 0.88) | **0.88-0.90 stable** | 0.87 | Clean win |
+| Normal Sudoku | 0.67 | **0.71-0.74** | 0.71 | At parity or win |
+| Tiny variants | underperform HRM | (out of scope for V3.2) | HRM 0.745/0.55 | Move to limitations |
+
+The Tiny size class is left as a documented limitation — V3.2 targets the Normal-vs-TRM comparison only.
+
+### Action plan
+
+- [ ] Apply the trm.py changes (add `is_last_step` parameter + gate alpha)
+- [ ] Local syntax check
+- [ ] Commit + push on `ShrekV3` branch
+- [ ] On cluster: `git pull` and resubmit Normal Sudoku + Normal Maze
+- [ ] Watch `q_halt_loss` — should stay flat or decrease, not rise
+- [ ] Watch `all.exact_accuracy` — should climb monotonically without single-shot dips

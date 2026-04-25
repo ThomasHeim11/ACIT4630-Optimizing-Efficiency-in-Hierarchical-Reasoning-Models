@@ -211,7 +211,12 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
             prev_pred=torch.where(reset_flag.view(-1, 1), torch.zeros_like(carry.prev_pred), carry.prev_pred),  # SHREK V2: reset on halt
         )
 
-    def forward(self, carry: TinyRecursiveReasoningModel_ACTV1InnerCarry, batch: Dict[str, torch.Tensor]) -> Tuple[TinyRecursiveReasoningModel_ACTV1InnerCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor], Optional[torch.Tensor]]:
+    def forward(self, carry: TinyRecursiveReasoningModel_ACTV1InnerCarry, batch: Dict[str, torch.Tensor], is_last_step: Optional[torch.Tensor] = None) -> Tuple[TinyRecursiveReasoningModel_ACTV1InnerCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor], Optional[torch.Tensor]]:
+        # SHREK explore-then-commit: `is_last_step` is a (B,) bool tensor flagging samples
+        # that will halt after this inner call (eval pins all samples to halt_max_steps;
+        # in training, only samples that exhausted the ACT budget without an early halt).
+        # For those samples we skip error injection so the Q-head and LM head see a
+        # stationary z_H at the commitment step — clean Q-targets, clean final answer.
         seq_info = dict(
             cos_sin=self.rotary_emb() if hasattr(self, "rotary_emb") else None,
         )
@@ -256,6 +261,14 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
             # Per-token error content and per-token gate.
             error_emb = self.error_encoder(learned_err_det.unsqueeze(-1))  # (B, L, hidden_size)
             alpha_per_token = self.config.alpha_max * learned_err_det.clamp(0, 1)  # (B, L)
+
+            # SHREK explore-then-commit: zero alpha for samples that will halt after this
+            # inner call. The Q-head and LM head read a stationary z_H on the commit step,
+            # which stops Q-targets from drifting late in training (the residual instability
+            # behind V3.1's late-training dips and Sudoku plateau).
+            if is_last_step is not None:
+                commit_mask = (~is_last_step).to(alpha_per_token.dtype).view(-1, 1)  # (B, 1)
+                alpha_per_token = alpha_per_token * commit_mask
 
             # Inject only into the non-puzzle-embedding positions (the actual tokens).
             scale = math.sqrt(self.config.hidden_size)
@@ -307,10 +320,15 @@ class TinyRecursiveReasoningModel_ACTV1(nn.Module):
         
         new_steps = torch.where(carry.halted, 0, carry.steps)
 
+        # SHREK explore-then-commit: per-sample flag — true iff this inner call is the
+        # final ACT step the model will run (i.e., new_steps + 1 reaches halt_max_steps).
+        # Passed to inner so error injection is skipped on the commit step.
+        will_be_last_step = (new_steps + 1) >= self.config.halt_max_steps  # (B,) bool
+
         new_current_data = {k: torch.where(carry.halted.view((-1, ) + (1, ) * (batch[k].ndim - 1)), batch[k], v) for k, v in carry.current_data.items()}
 
         # Forward inner model — SHREK V2: extra learned_err return value
-        new_inner_carry, logits, (q_halt_logits, q_continue_logits), learned_err = self.inner(new_inner_carry, new_current_data)
+        new_inner_carry, logits, (q_halt_logits, q_continue_logits), learned_err = self.inner(new_inner_carry, new_current_data, is_last_step=will_be_last_step)
 
         outputs = {
             "logits": logits,
