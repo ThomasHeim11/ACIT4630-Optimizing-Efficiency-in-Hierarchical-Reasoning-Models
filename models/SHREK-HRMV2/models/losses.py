@@ -97,24 +97,23 @@ class ACTLossHead(nn.Module):
 
             metrics["q_continue_loss"] = q_continue_loss.detach()
 
-        # SHREK: auxiliary loss — trains error_estimator to predict per-TOKEN normalized LM loss.
-        # Target is built per cell, not per puzzle, so the estimator's (B, L) output aligns
-        # with its supervision. Invalid (masked/padding) positions get target 0 so the
-        # estimator learns to output ~0 there and the injection gate stays closed.
-        # This is the aux_loss's only job — the injection path in trm.py is gradient-isolated
-        # from this objective, which is what keeps late-training dynamics stable.
+        # SHREK: aux loss trains error_estimator to predict per-token CE on an absolute scale.
+        # Targets shrink as the model converges → estimator output → 0 → injection gate closes.
         aux_loss = 0
         if "learned_err" in outputs:
-            # Per-token LM loss (B, L), NOT reduced over the sequence dimension.
+            # SHREK: per-token LM loss (B, L), unreduced.
             per_token_lm_loss = self.loss_fn(outputs["logits"], labels, ignore_index=IGNORE_LABEL_ID, valid_mask=mask) / loss_divisor  # (B, L)
             with torch.no_grad():
-                # Normalize to [0, 1] per batch using the max over valid positions.
                 valid = (labels != IGNORE_LABEL_ID)  # (B, L)
-                lm_max = per_token_lm_loss[valid].max().clamp(min=1e-8) if valid.any() else torch.tensor(1.0, device=per_token_lm_loss.device)
-                normalized_lm_loss = (per_token_lm_loss / lm_max).clamp(0, 1)
-                # Zero out invalid positions so the estimator learns to close the gate there.
+                # SHREK: divide by log(vocab_size) — max possible CE under uniform prediction.
+                # Absolute reference, not batch-relative, so targets reflect actual model quality.
+                vocab_size = outputs["logits"].shape[-1]
+                lm_loss_reference = math.log(vocab_size)
+                normalized_lm_loss = (per_token_lm_loss / lm_loss_reference).clamp(0, 1)
+                # SHREK: invalid positions get target 0 so the gate stays closed there.
                 normalized_lm_loss = torch.where(valid, normalized_lm_loss, torch.zeros_like(normalized_lm_loss))
-            aux_loss = 0.1 * F.mse_loss(outputs["learned_err"], normalized_lm_loss.detach(), reduction="sum")
+            # SHREK: weight 0.5 keeps the estimator's gradient sharp when targets are small late in training.
+            aux_loss = 0.5 * F.mse_loss(outputs["learned_err"], normalized_lm_loss.detach(), reduction="sum")
             metrics["aux_loss"] = aux_loss.detach()
 
         # Filter outputs for return

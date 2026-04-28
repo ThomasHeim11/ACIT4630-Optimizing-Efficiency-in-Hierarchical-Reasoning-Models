@@ -456,3 +456,111 @@ The Tiny size class is left as a documented limitation — V3.2 targets the Norm
 - [ ] On cluster: `git pull` and resubmit Normal Sudoku + Normal Maze
 - [ ] Watch `q_halt_loss` — should stay flat or decrease, not rise
 - [ ] Watch `all.exact_accuracy` — should climb monotonically without single-shot dips
+
+---
+
+## V3.3 — Fix the dynamic injection (absolute aux loss target + stronger weight)
+
+### Observation after V3.2 results
+
+V3.2 ran to completion (50k Sudoku, 150k Maze). Final results vs TRM-Att (paper baseline 74.7% Sudoku / 85.3% Maze):
+
+| Task | TRM-Att | V3.2 final | Gap |
+|------|---------|------------|-----|
+| Sudoku | 74.7% | ~70% | **−4.7%** |
+| Maze | 85.3% | ~87% | **+1.7%** |
+
+Error injection helps Maze but actively hurts Sudoku. Architecture is otherwise identical to TRM-Att (verified: same depth, same single-net, EMA enabled, stablemax, full-recursion gradient flow, same exploration prob). The injection mechanism itself is the only differentiator — and it's only beneficial on one task.
+
+### Root cause — the aux loss target normalization is broken
+
+In `losses.py`:
+
+```python
+lm_max = per_token_lm_loss[valid].max().clamp(min=1e-8)
+normalized_lm_loss = (per_token_lm_loss / lm_max).clamp(0, 1)
+```
+
+The estimator's training target is **relative to the batch max**, not absolute. When the model converges and all per-token losses are tiny (e.g., 0.005), the worst token still gets target = 1.0. The estimator dutifully outputs ~1.0 for that token → full `alpha_max` injection on a token that's already nearly correct.
+
+Result: **per-token gating selects positions correctly, but injection magnitude never down-scales as the model converges.** Late-training Sudoku gets full-strength noise injected into a converged state. That's the −4.7% gap to TRM-Att.
+
+### Mechanism — make the estimator's target absolute
+
+Replace relative normalization with an absolute reference (max possible CE loss):
+
+```python
+# OLD — relative to batch max (broken)
+lm_max = per_token_lm_loss[valid].max().clamp(min=1e-8)
+normalized_lm_loss = (per_token_lm_loss / lm_max).clamp(0, 1)
+
+# NEW — absolute scale
+LM_LOSS_REFERENCE = math.log(vocab_size)
+normalized_lm_loss = (per_token_lm_loss / LM_LOSS_REFERENCE).clamp(0, 1)
+```
+
+Behavior across training:
+- **Bad model:** per-token losses ~0.5 → targets ~0.2 → estimator outputs ~0.2 → injection meaningful
+- **Converged model:** per-token losses ~0.005 → targets ~0.002 → estimator outputs ~0.002 → injection vanishes
+
+The dynamic gate finally does what it was designed to do — **adapt magnitude to model quality**, not just position.
+
+### Step 2 — raise aux loss weight from 0.1 to 0.5
+
+```python
+aux_loss = 0.5 * F.mse_loss(outputs["learned_err"], normalized_lm_loss.detach(), reduction="sum")
+```
+
+After Step 1, target values are smaller in absolute scale → MSE gradients are smaller → estimator updates slowly with weight 0.1. Bumping to 0.5 compensates so the estimator continues to learn precisely even late in training. Not "stronger injection" — **better-targeted injection** because the estimator is more accurate.
+
+### Why it works
+
+| Failure mode in V3.2 | Why this fix addresses it |
+|---|---|
+| Sudoku stuck at ~70% (below TRM-Att) | Estimator output naturally → 0 on converged tokens → injection vanishes → matches TRM-Att |
+| Maze late dip at step ~100k | Same mechanism: injection magnitude shrinks as model converges → no destabilization |
+| Rising q_halt_loss | Q-head reads injected z_H; less injection late → more stable z_H → flatter Q-loss |
+| Estimator under-trained | Weight 0.5 + meaningful targets = sharper estimator faster |
+
+### Why we are NOT doing other things
+
+- **Annealing schedule:** redundant — the absolute target makes injection fade automatically. No magic numbers.
+- **Per-task `alpha_max` tuning:** redundant — the estimator adapts per-task by definition.
+- **Entropy-aware estimator:** complex plumbing, marginal expected gain. The estimator already implicitly sees uncertainty via z_H.
+- **Q-head detach:** speculative; V3.2 data showed Q-head was OK with K=1 commit-step skip.
+- **More epochs / more params:** breaks fairness vs TRM.
+
+### Files to change
+
+- `losses.py` — two lines (target normalization + weight)
+- `trm.py` — no change (V3.2 commit-step skip stays)
+- Configs / scripts — no change
+
+### Expected outcome
+
+| Task | TRM-Att | V3.2 | V3.3 target |
+|------|---------|------|-------------|
+| Sudoku | 74.7% | ~70% | **75–78%** — clean +1–3% margin |
+| Maze | 85.3% | ~87% | **88–91%** — clean +3–6% margin |
+
+- **Probability of beating TRM-Att on at least one task:** ~85%
+- **Probability of beating on both:** ~60%
+- **Probability of visibly smoother curves than V3.2:** ~90%
+
+### What to watch on W&B
+
+- `aux_loss` curve: should drop noticeably as model converges (proof the new absolute target works — it's bounded by how small targets can get)
+- `all.q_halt_loss`: should stay flat or decrease, NOT rise like in V3.1/V3.2
+- `all.exact_accuracy` (Sudoku): should climb past 0.74 (TRM-Att level) without plateau
+- `all.exact_accuracy` (Maze): should peak around 0.90 with no late dip
+
+### Action plan
+
+- [ ] Apply the `losses.py` changes (absolute target + weight 0.5)
+- [ ] Local syntax check
+- [ ] Commit + push on `ShrekV3` branch
+- [ ] On cluster: `git pull` and resubmit Normal Sudoku + Normal Maze
+- [ ] Watch `aux_loss` — should drop as model improves (proof of fix working)
+- [ ] Watch `all.q_halt_loss` — should stay flat or decrease, not rise
+- [ ] Watch `all.exact_accuracy` (Sudoku) — should break past 0.74
+- [ ] Watch `all.exact_accuracy` (Maze) — should climb monotonically with no late dip
