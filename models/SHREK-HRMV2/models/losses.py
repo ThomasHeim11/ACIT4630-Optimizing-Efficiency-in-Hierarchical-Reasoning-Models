@@ -97,27 +97,14 @@ class ACTLossHead(nn.Module):
 
             metrics["q_continue_loss"] = q_continue_loss.detach()
 
-        # SHREK: aux loss trains error_estimator to predict per-token CE on an absolute scale.
-        # Targets shrink as the model converges → estimator output → 0 → injection gate closes.
-        aux_loss = 0
-        if "learned_err" in outputs:
-            # SHREK: per-token LM loss (B, L), unreduced.
-            per_token_lm_loss = self.loss_fn(outputs["logits"], labels, ignore_index=IGNORE_LABEL_ID, valid_mask=mask) / loss_divisor  # (B, L)
-            with torch.no_grad():
-                valid = (labels != IGNORE_LABEL_ID)  # (B, L)
-                # SHREK: divide by log(vocab_size) — max possible CE under uniform prediction.
-                # Absolute reference, not batch-relative, so targets reflect actual model quality.
-                vocab_size = outputs["logits"].shape[-1]
-                lm_loss_reference = math.log(vocab_size)
-                normalized_lm_loss = (per_token_lm_loss / lm_loss_reference).clamp(0, 1)
-                # SHREK: invalid positions get target 0 so the gate stays closed there.
-                normalized_lm_loss = torch.where(valid, normalized_lm_loss, torch.zeros_like(normalized_lm_loss))
-            # SHREK: weight 0.5 keeps the estimator's gradient sharp when targets are small late in training.
-            aux_loss = 0.5 * F.mse_loss(outputs["learned_err"], normalized_lm_loss.detach(), reduction="sum")
-            metrics["aux_loss"] = aux_loss.detach()
+        # SHREK V3.4: aux loss removed. The error estimator and learned per-token
+        # gate are gone (they never reached zero and kept perturbing converged
+        # states), so there's nothing to supervise with MSE. Injection magnitude
+        # is now driven entirely by a cosine schedule inside the model. The
+        # final loss is just lm + halt (q_continue_loss is 0 under no_ACT_continue).
 
         # Filter outputs for return
         detached_outputs = {k: outputs[k].detach() for k in return_keys if k in outputs}
 
-        return new_carry, lm_loss + 0.5 * (q_halt_loss + q_continue_loss) + aux_loss, metrics, detached_outputs, new_carry.halted.all()
+        return new_carry, lm_loss + 0.5 * (q_halt_loss + q_continue_loss), metrics, detached_outputs, new_carry.halted.all()
 

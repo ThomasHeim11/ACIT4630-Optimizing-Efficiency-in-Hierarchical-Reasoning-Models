@@ -63,8 +63,9 @@ class TinyRecursiveReasoningModel_ACTV1Config(BaseModel):
     puzzle_emb_len: int = 16 # if non-zero, its specified to this value
     no_ACT_continue: bool =  True # No continue ACT loss, only use the sigmoid of the halt which makes much more sense
 
-    # SHREK V3: self-correction via self-gated error injection.
-    # Stagnation delta removed — V2 reproducibility lives on the SHREKV2 branch.
+    # SHREK V3.4: self-correction via cosine-decayed random error injection.
+    # The per-token learned gate from V3.0–V3.3 was retired; cosine schedule on
+    # alpha guarantees injection magnitude reaches exactly 0 at end-of-training.
     enable_error_injection: bool = False
     alpha_max: float = 0.01
 
@@ -161,13 +162,20 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
 
         # SHREK: error injection components.
-        # error_estimator: per-token Linear(h, 1) predicting normalized LM loss at each cell.
-        #                  Trained exclusively via aux_loss (gradients are blocked elsewhere).
-        # error_encoder:   Linear(1, h) embedding the scalar uncertainty back into hidden space.
-        # Alpha is per-token gated by learned_err at runtime — no warmup, no schedule.
+        # error_encoder is a Linear(1, hidden_size) that maps a per-token random
+        # scalar into a learned direction in hidden space — the model figures out
+        # what shape of perturbation is informative for self-correction. The
+        # injection magnitude is no longer learned; it's a cosine schedule of
+        # the training step (see _current_step + set_train_progress below) so
+        # alpha rides from alpha_max at step 0 to exactly 0 at the final step.
         if self.config.enable_error_injection:
             self.error_encoder = nn.Linear(1, self.config.hidden_size)
-            self.error_estimator = nn.Linear(self.config.hidden_size, 1)
+
+        # SHREK: training-progress state driving the cosine alpha schedule.
+        # pretrain.py calls set_train_progress(step, total_steps) before each
+        # forward; the inner forward reads these to compute alpha inline.
+        self._current_step = 0
+        self._total_steps = 1
 
         # Q head special init
         # Init Q to (almost) zero for faster learning during bootstrapping
@@ -211,7 +219,15 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
             prev_pred=torch.where(reset_flag.view(-1, 1), torch.zeros_like(carry.prev_pred), carry.prev_pred),  # SHREK V2: reset on halt
         )
 
-    def forward(self, carry: TinyRecursiveReasoningModel_ACTV1InnerCarry, batch: Dict[str, torch.Tensor], is_last_step: Optional[torch.Tensor] = None) -> Tuple[TinyRecursiveReasoningModel_ACTV1InnerCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor], Optional[torch.Tensor]]:
+    def set_train_progress(self, current_step: int, total_steps: int):
+        # SHREK: pretrain.py calls this each training step so the cosine alpha
+        # schedule in the forward knows where in training we are. Stored as
+        # plain Python ints — they are read inline in forward and never enter
+        # the autograd graph or the checkpoint state_dict.
+        self._current_step = int(current_step)
+        self._total_steps = max(1, int(total_steps))
+
+    def forward(self, carry: TinyRecursiveReasoningModel_ACTV1InnerCarry, batch: Dict[str, torch.Tensor], is_last_step: Optional[torch.Tensor] = None) -> Tuple[TinyRecursiveReasoningModel_ACTV1InnerCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         # SHREK explore-then-commit: `is_last_step` is a (B,) bool tensor flagging samples
         # that will halt after this inner call (eval pins all samples to halt_max_steps;
         # in training, only samples that exhausted the ACT budget without an early halt).
@@ -241,38 +257,41 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         # LM Outputs
         output = self.lm_head(z_H)[:, self.puzzle_emb_len:]
 
-        # SHREK: per-token self-gated error injection, gradient-isolated estimator.
-        # Each cell gets its own uncertainty score → its own alpha. Easy cells (given Sudoku
-        # cells, Maze walls) have learned_err ≈ 0 → zero perturbation; hard cells get full
-        # regularization. learned_err is fully detached before injection so the main LM loss
-        # cannot train the estimator (closes the gradient-cascade path that caused the V3
-        # late-training collapse); aux_loss in losses.py is its only training signal.
-        learned_err = None
-        current_pred = output.detach().argmax(dim=-1)  # (B, seq_len) — kept for carry.prev_pred
+        # SHREK: cosine-decayed random error injection. The V3.0–V3.3 learned
+        # per-token gate never reached zero late in training, so injection kept
+        # corrupting already-converged states (root cause of V3.3's late-stage
+        # exact_accuracy drop on Maze and the Sudoku regression). Replacing the
+        # gate with a cosine schedule gives a guaranteed alpha → 0 at the final
+        # step. The encoder is kept so the *direction* of injection in hidden
+        # space is still learned; only the magnitude policy and the per-token
+        # input scalar are new.
+        current_pred = output.detach().argmax(dim=-1)  # (B, seq_len) — kept on carry.prev_pred
         if self.config.enable_error_injection:
-            # Per-token uncertainty estimate. z_H detached so estimator is decoupled from
-            # the main computation graph; only aux_loss will update error_estimator.
-            z_H_tokens = z_H[:, self.puzzle_emb_len:].detach()  # (B, L, hidden_size)
-            learned_err = torch.sigmoid(self.error_estimator(z_H_tokens.float())).squeeze(-1)  # (B, L)
+            # Cosine schedule: 1.0 at start, 0.5 at midpoint, exactly 0.0 at the
+            # last step. Slow start keeps full injection while the model is
+            # actively learning self-correction; slow end gives many steps with
+            # near-zero noise so the model can settle cleanly.
+            progress = min(1.0, self._current_step / self._total_steps)
+            alpha = self.config.alpha_max * 0.5 * (1.0 + math.cos(math.pi * progress))
 
-            # Fully detach before injection — error_encoder sees no gradient back to estimator.
-            learned_err_det = learned_err.detach()
+            # Per-token random scalar drives the encoder. The encoder learns one
+            # informative direction in hidden space; the random scalar gives each
+            # token a different sign and magnitude along that direction.
+            B = z_H.shape[0]
+            L_tok = z_H.shape[1] - self.puzzle_emb_len
+            noise_input = torch.randn(B, L_tok, 1, device=z_H.device, dtype=torch.float32)
+            error_emb = self.error_encoder(noise_input)  # (B, L_tok, hidden_size)
 
-            # Per-token error content and per-token gate.
-            error_emb = self.error_encoder(learned_err_det.unsqueeze(-1))  # (B, L, hidden_size)
-            alpha_per_token = self.config.alpha_max * learned_err_det.clamp(0, 1)  # (B, L)
-
-            # SHREK explore-then-commit: zero alpha for samples that will halt after this
-            # inner call. The Q-head and LM head read a stationary z_H on the commit step,
-            # which stops Q-targets from drifting late in training (the residual instability
-            # behind V3.1's late-training dips and Sudoku plateau).
+            # SHREK explore-then-commit (kept from V3.2): zero injection on the
+            # final ACT step so the Q-head and LM head read a clean, stationary
+            # z_H at decision time — clean Q-targets, clean final answer.
             if is_last_step is not None:
-                commit_mask = (~is_last_step).to(alpha_per_token.dtype).view(-1, 1)  # (B, 1)
-                alpha_per_token = alpha_per_token * commit_mask
+                commit_mask = (~is_last_step).to(error_emb.dtype).view(-1, 1, 1)  # (B, 1, 1)
+                error_emb = error_emb * commit_mask
 
             # Inject only into the non-puzzle-embedding positions (the actual tokens).
             scale = math.sqrt(self.config.hidden_size)
-            z_H_tokens_new = z_H[:, self.puzzle_emb_len:] + alpha_per_token.unsqueeze(-1) * error_emb / scale
+            z_H_tokens_new = z_H[:, self.puzzle_emb_len:] + alpha * error_emb / scale
             z_H = torch.cat([z_H[:, :self.puzzle_emb_len], z_H_tokens_new], dim=1)
 
         # Q-head — plain z_H[:, 0], no stagnation delta.
@@ -285,8 +304,9 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
             prev_pred=current_pred.detach(),
         )
 
-        # SHREK V2: Return learned_err for aux loss
-        return new_carry, output, (q_logits[..., 0], q_logits[..., 1]), learned_err
+        # SHREK: return tuple is back to the original three values — no more
+        # learned_err exposed since the cosine schedule needs no aux loss.
+        return new_carry, output, (q_logits[..., 0], q_logits[..., 1])
 
 
 class TinyRecursiveReasoningModel_ACTV1(nn.Module):
@@ -327,17 +347,15 @@ class TinyRecursiveReasoningModel_ACTV1(nn.Module):
 
         new_current_data = {k: torch.where(carry.halted.view((-1, ) + (1, ) * (batch[k].ndim - 1)), batch[k], v) for k, v in carry.current_data.items()}
 
-        # Forward inner model — SHREK V2: extra learned_err return value
-        new_inner_carry, logits, (q_halt_logits, q_continue_logits), learned_err = self.inner(new_inner_carry, new_current_data, is_last_step=will_be_last_step)
+        # SHREK: inner returns the original three values now (no learned_err);
+        # injection magnitude is set by the cosine schedule, not exposed here.
+        new_inner_carry, logits, (q_halt_logits, q_continue_logits) = self.inner(new_inner_carry, new_current_data, is_last_step=will_be_last_step)
 
         outputs = {
             "logits": logits,
             "q_halt_logits": q_halt_logits,
             "q_continue_logits": q_continue_logits,
         }
-        # SHREK V2: pass learned_err to pretrain.py for aux loss
-        if learned_err is not None:
-            outputs["learned_err"] = learned_err
 
         with torch.no_grad():
             # Step
@@ -366,7 +384,7 @@ class TinyRecursiveReasoningModel_ACTV1(nn.Module):
                     # NOTE: No replay buffer and target networks for computing target Q-value.
                     # As batch_size is large, there're many parallel envs.
                     # Similar concept as PQN https://arxiv.org/abs/2407.04811
-                    _, _, (next_q_halt_logits, next_q_continue_logits), _ = self.inner(new_inner_carry, new_current_data)
+                    _, _, (next_q_halt_logits, next_q_continue_logits) = self.inner(new_inner_carry, new_current_data)
                     outputs["target_q_continue"] = torch.sigmoid(torch.where(is_last_step, next_q_halt_logits, torch.maximum(next_q_halt_logits, next_q_continue_logits)))
 
         return TinyRecursiveReasoningModel_ACTV1Carry(new_inner_carry, new_steps, halted, new_current_data), outputs

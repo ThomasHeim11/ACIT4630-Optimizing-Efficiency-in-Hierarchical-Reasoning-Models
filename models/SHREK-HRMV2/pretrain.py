@@ -286,6 +286,21 @@ def create_evaluators(config: PretrainConfig, eval_metadata: PuzzleDatasetMetada
 
     return evaluators
 
+
+def _set_train_progress(model, current_step: int, total_steps: int):
+    # SHREK: walk the wrapper chain (torch.compile -> ACTLossHead -> ACT wrapper
+    # -> Inner) and call set_train_progress on whatever has it. This drives the
+    # cosine alpha schedule used by the error injection. No-op if the inner
+    # model doesn't expose the setter (e.g., enable_error_injection=False
+    # builds still define it; only running with injection off makes the call a
+    # silent identity, which is fine).
+    m = model
+    for attr in ("_orig_mod", "model", "inner"):
+        m = getattr(m, attr, m)
+    if hasattr(m, "set_train_progress"):
+        m.set_train_progress(current_step, total_steps)
+
+
 def train_batch(config: PretrainConfig, train_state: TrainState, batch: Any, global_batch_size: int, rank: int, world_size: int):
     train_state.step += 1
     if train_state.step > train_state.total_steps:  # At most train_total_steps
@@ -298,6 +313,11 @@ def train_batch(config: PretrainConfig, train_state: TrainState, batch: Any, glo
     if train_state.carry is None:
         with torch.device("cuda"):
             train_state.carry = train_state.model.initial_carry(batch)  # type: ignore
+
+    # SHREK: tell the inner model where we are in training so its cosine alpha
+    # schedule can compute progress = current_step / total_steps. Done here,
+    # immediately before forward, so the value is fresh on every step.
+    _set_train_progress(train_state.model, train_state.step, train_state.total_steps)
 
     # Forward
     train_state.carry, loss, metrics, _, _ = train_state.model(carry=train_state.carry, batch=batch, return_keys=[])
