@@ -1,0 +1,426 @@
+from typing import Tuple, List, Dict, Optional
+from dataclasses import dataclass
+import math
+
+import torch
+import torch.nn.functional as F
+from torch import nn
+from pydantic import BaseModel
+
+from models.common import trunc_normal_init_
+from models.layers import rms_norm, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear
+from models.sparse_embedding import CastedSparseEmbedding
+from models.hrm.error_singals import get_error_signal  # SHREK: error signal module
+
+
+@dataclass
+class HierarchicalReasoningModel_ACTV1InnerCarry:
+    z_H: torch.Tensor
+    z_L: torch.Tensor
+    # SHREK: prev_pred stores last step's argmax predictions for flip rate computation.
+    # zeros = fresh start (first step after init or reset gives flip_rate ≈ 1.0)
+    prev_pred: torch.Tensor        # (B, seq_len) int32
+    # SHREK: Q-values cached in carry — no longer used for Q-targets (see Bug 4),
+    # but kept because removing them causes torch.compile regression.
+    prev_q_halt: torch.Tensor      # (B,) float32
+    prev_q_continue: torch.Tensor  # (B,) float32
+
+
+@dataclass
+class HierarchicalReasoningModel_ACTV1Carry:
+    inner_carry: HierarchicalReasoningModel_ACTV1InnerCarry
+    
+    steps: torch.Tensor
+    halted: torch.Tensor
+    
+    current_data: Dict[str, torch.Tensor]
+
+
+class HierarchicalReasoningModel_ACTV1Config(BaseModel):
+    batch_size: int
+    seq_len: int
+    puzzle_emb_ndim: int = 0
+    num_puzzle_identifiers: int
+    vocab_size: int
+
+    H_cycles: int
+    L_cycles: int
+
+    H_layers: int
+    L_layers: int
+
+    # Transformer config
+    hidden_size: int
+    expansion: float
+    num_heads: int
+    pos_encodings: str
+
+    rms_norm_eps: float = 1e-5
+    rope_theta: float = 10000.0
+    
+    # Halting Q-learning config
+    halt_max_steps: int
+    halt_exploration_prob: float
+
+    # SHREK: error injection warmup — ramps alpha from 0 to alpha_max over warmup steps.
+    # Prevents small models from collapsing before the error estimator is accurate.
+    alpha_max: float = 0.01
+    alpha_warmup_steps: int = 5000
+
+    # SHREK ablation flags — disable components from training scripts
+    enable_error_injection: bool = True    # Error-Conditioned Injection (flip rate + learned estimator)
+    enable_stagnation_delta: bool = True   # Stagnation-Aware Q-head (delta fed to Q-head)
+
+    forward_dtype: str = "bfloat16"
+
+
+class HierarchicalReasoningModel_ACTV1Block(nn.Module):
+    def __init__(self, config: HierarchicalReasoningModel_ACTV1Config) -> None:
+        super().__init__()
+
+        self.self_attn = Attention(
+            hidden_size=config.hidden_size,
+            head_dim=config.hidden_size // config.num_heads,
+            num_heads=config.num_heads,
+            num_key_value_heads=config.num_heads,
+            causal=False
+        )
+        self.mlp = SwiGLU(
+            hidden_size=config.hidden_size,
+            expansion=config.expansion,
+        )
+        self.norm_eps = config.rms_norm_eps
+
+    def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
+        # Post Norm
+        # Self Attention
+        hidden_states = rms_norm(hidden_states + self.self_attn(cos_sin=cos_sin, hidden_states=hidden_states), variance_epsilon=self.norm_eps)
+        # Fully Connected
+        hidden_states = rms_norm(hidden_states + self.mlp(hidden_states), variance_epsilon=self.norm_eps)
+        return hidden_states
+
+
+class HierarchicalReasoningModel_ACTV1ReasoningModule(nn.Module):
+    def __init__(self, layers: List[HierarchicalReasoningModel_ACTV1Block]):
+        super().__init__()
+
+        self.layers = torch.nn.ModuleList(layers)
+
+    def forward(self, hidden_states: torch.Tensor, input_injection: torch.Tensor, **kwargs) -> torch.Tensor:
+        # Input injection (add)
+        hidden_states = hidden_states + input_injection
+        # Layers
+        for layer in self.layers:
+            hidden_states = layer(hidden_states=hidden_states, **kwargs)
+
+        return hidden_states
+
+
+class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
+    def __init__(self, config: HierarchicalReasoningModel_ACTV1Config) -> None:
+        super().__init__()
+        self.config = config
+        self.forward_dtype = getattr(torch, self.config.forward_dtype)
+
+        # I/O
+        self.embed_scale  = math.sqrt(self.config.hidden_size)
+        embed_init_std = 1.0 / self.embed_scale
+
+        self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
+        self.lm_head      = CastedLinear(self.config.hidden_size, self.config.vocab_size, bias=False)
+        # SHREK: Q-head input size depends on stagnation delta flag
+        q_head_input_size = self.config.hidden_size + (1 if self.config.enable_stagnation_delta else 0)
+        self.q_head       = CastedLinear(q_head_input_size, 2, bias=True)
+
+        # SHREK: error_encoder maps the scalar error score -> hidden_size vector for injection into z_H
+        # alpha follows a linear warmup schedule (0 → alpha_max over warmup steps).
+        # This lets the error estimator train before its signal affects z_H.
+        self.error_encoder  = nn.Linear(1, self.config.hidden_size)
+        # SHREK: step counter for alpha warmup (not a learned parameter)
+        self.register_buffer('_alpha_step', torch.tensor(0, dtype=torch.long))
+        # SHREK: error_estimator reads z_H and predicts how wrong the model is.
+        # trained via auxiliary loss in pretrain.py using the real lm_loss as target.
+        # catches "stuck but wrong" — a model confidently on the wrong answer.
+        # flip rate catches oscillation; estimator catches confident-but-wrong.
+        self.error_estimator = nn.Linear(self.config.hidden_size, 1)
+
+        self.puzzle_emb_len = -(self.config.puzzle_emb_ndim // -self.config.hidden_size)  # ceil div
+        if self.config.puzzle_emb_ndim > 0:
+            # Zero init puzzle embeddings
+            self.puzzle_emb = CastedSparseEmbedding(self.config.num_puzzle_identifiers, self.config.puzzle_emb_ndim,
+                                                    batch_size=self.config.batch_size, init_std=0, cast_to=self.forward_dtype)
+
+        # LM Blocks
+        if self.config.pos_encodings == "rope":
+            self.rotary_emb = RotaryEmbedding(dim=self.config.hidden_size // self.config.num_heads,
+                                              max_position_embeddings=self.config.seq_len + self.puzzle_emb_len,
+                                              base=self.config.rope_theta)
+        elif self.config.pos_encodings == "learned":
+            self.embed_pos = CastedEmbedding(self.config.seq_len + self.puzzle_emb_len, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
+        else:
+            raise NotImplementedError()
+
+        # Reasoning Layers
+        self.H_level = HierarchicalReasoningModel_ACTV1ReasoningModule(layers=[HierarchicalReasoningModel_ACTV1Block(self.config) for _i in range(self.config.H_layers)])
+        self.L_level = HierarchicalReasoningModel_ACTV1ReasoningModule(layers=[HierarchicalReasoningModel_ACTV1Block(self.config) for _i in range(self.config.L_layers)])
+        
+        # Initial states
+        self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
+        self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
+
+        # Q head special init
+        # Init Q to (almost) zero for faster learning during bootstrapping
+        with torch.no_grad():
+            self.q_head.weight.zero_()
+            self.q_head.bias.fill_(-5)  # type: ignore
+
+    def _input_embeddings(self, input: torch.Tensor, puzzle_identifiers: torch.Tensor):
+        # Token embedding
+        embedding = self.embed_tokens(input.to(torch.int32))
+
+        # Puzzle embeddings
+        if self.config.puzzle_emb_ndim > 0:
+            puzzle_embedding = self.puzzle_emb(puzzle_identifiers)
+            
+            pad_count = self.puzzle_emb_len * self.config.hidden_size - puzzle_embedding.shape[-1]
+            if pad_count > 0:
+                puzzle_embedding = F.pad(puzzle_embedding, (0, pad_count))
+
+            embedding = torch.cat((puzzle_embedding.view(-1, self.puzzle_emb_len, self.config.hidden_size), embedding), dim=-2)
+
+        # Position embeddings
+        if self.config.pos_encodings == "learned":
+            # scale by 1/sqrt(2) to maintain forward variance
+            embedding = 0.707106781 * (embedding + self.embed_pos.embedding_weight.to(self.forward_dtype))
+
+        # Scale
+        return self.embed_scale * embedding
+
+    def empty_carry(self, batch_size: int):
+        return HierarchicalReasoningModel_ACTV1InnerCarry(
+            z_H=torch.empty(batch_size, self.config.seq_len + self.puzzle_emb_len, self.config.hidden_size, dtype=self.forward_dtype),
+            z_L=torch.empty(batch_size, self.config.seq_len + self.puzzle_emb_len, self.config.hidden_size, dtype=self.forward_dtype),
+            # SHREK: zeros = no previous prediction — first step gives flip_rate ≈ 1.0
+            # device=H_init.device ensures prev_pred is on CUDA, matching z_H and logits
+            prev_pred=torch.zeros(batch_size, self.config.seq_len, dtype=torch.int32, device=self.H_init.device),
+            prev_q_halt=torch.full((batch_size,), -5.0, device=self.H_init.device),
+            prev_q_continue=torch.full((batch_size,), -5.0, device=self.H_init.device),
+        )
+        
+    def reset_carry(self, reset_flag: torch.Tensor, carry: HierarchicalReasoningModel_ACTV1InnerCarry):
+        # SHREK: zero out prev_pred for reset sequences so they start fresh.
+        # a reset sequence is one that just halted — it will solve a new puzzle next.
+        # zeroing prev_pred means first step gives flip_rate ≈ 1.0 (maximum uncertainty).
+        new_prev_pred = torch.where(
+            reset_flag.view(-1, 1),
+            torch.zeros_like(carry.prev_pred),
+            carry.prev_pred
+        )
+        new_prev_q_halt     = torch.where(reset_flag, torch.full_like(carry.prev_q_halt,     -5.0), carry.prev_q_halt)
+        new_prev_q_continue = torch.where(reset_flag, torch.full_like(carry.prev_q_continue, -5.0), carry.prev_q_continue)
+
+        return HierarchicalReasoningModel_ACTV1InnerCarry(
+            z_H=torch.where(reset_flag.view(-1, 1, 1), self.H_init, carry.z_H),
+            z_L=torch.where(reset_flag.view(-1, 1, 1), self.L_init, carry.z_L),
+            prev_pred=new_prev_pred,
+            prev_q_halt=new_prev_q_halt,
+            prev_q_continue=new_prev_q_continue,
+        )
+
+
+    # SHREK: removed task_type parameter — error signal is now universal (no task rules needed)
+    def forward(self, carry: HierarchicalReasoningModel_ACTV1InnerCarry, batch: Dict[str, torch.Tensor], require_trace=False):
+    #  -> Tuple[HierarchicalReasoningModel_ACTV1InnerCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor], torch.Tensor]:
+        seq_info = dict(
+            cos_sin=self.rotary_emb() if hasattr(self, "rotary_emb") else None,
+        )
+
+        # Input encoding
+        input_embeddings = self._input_embeddings(batch["inputs"], batch["puzzle_identifiers"])
+
+        z_H_trace = []
+
+        # Forward iterations
+        with torch.no_grad():
+            z_H, z_L = carry.z_H, carry.z_L
+
+            for _H_step in range(self.config.H_cycles):
+                for _L_step in range(self.config.L_cycles):
+                    if not ((_H_step == self.config.H_cycles - 1) and (_L_step == self.config.L_cycles - 1)):
+                        z_L = self.L_level(z_L, z_H + input_embeddings, **seq_info)
+
+                if not (_H_step == self.config.H_cycles - 1):
+                    z_H = self.H_level(z_H, z_L, **seq_info)
+                    if require_trace:
+                        z_H_trace.append(z_H.detach().cpu().clone())
+
+        assert not z_H.requires_grad and not z_L.requires_grad
+
+        # 1-step grad
+        z_L = self.L_level(z_L, z_H + input_embeddings, **seq_info)
+        z_H = self.H_level(z_H, z_L, **seq_info)
+
+        if require_trace:
+            z_H_trace.append(z_H.detach().cpu().clone())
+
+        # LM Outputs — decode z_H into token predictions
+        output = self.lm_head(z_H)[:, self.puzzle_emb_len:]   # (B, seq_len, vocab_size)
+
+        # SHREK Component 1: Combined Error Signal
+        # Signal A — flip rate: what fraction of tokens changed from last step?
+        #   catches oscillation (model changing its mind between wrong options)
+        flip_err, current_pred = get_error_signal(output, carry.prev_pred)     # (B,), (B, seq_len)
+
+        # Signal B — learned estimator: reads z_H and predicts how wrong the model is.
+        #   catches stuck-but-wrong (model confidently on wrong answer without oscillating)
+        #   average over content positions (skip puzzle embedding prefix positions)
+        #   CRITICAL: detach z_H_mean so aux_loss only trains error_estimator weights,
+        #   NOT the main reasoning layers. Without detach, aux_loss sends parasitic
+        #   gradients through z_H → H_level/L_level that conflict with lm_loss.
+        z_H_mean    = z_H[:, self.puzzle_emb_len:].mean(dim=1).detach()        # (B, hidden_size)
+        learned_err = torch.sigmoid(self.error_estimator(z_H_mean.float()))    # (B, 1)
+        learned_err = learned_err.squeeze(-1)                                  # (B,)
+
+        # SHREK: combined error = 50/50 blend of both signals
+        # flip_err works immediately from step 1 (no learning needed)
+        # learned_err becomes accurate over training and takes over as the stronger signal
+        error = 0.5 * flip_err + 0.5 * learned_err                            # (B,)
+
+        # SHREK Component 2: Stagnation-Aware Q-head
+        # Ablation: can be disabled via config.enable_stagnation_delta=False
+        if self.config.enable_stagnation_delta:
+            # Compute how much z_H changed during this reasoning step.
+            # CRITICAL: detach so Q-head gradients don't flow through all positions of z_H.
+            z_H_f = z_H.detach().float()
+            z_H_start = carry.z_H.detach().float()
+            delta = torch.norm(z_H_f - z_H_start, dim=(1, 2)) / (torch.norm(z_H_start, dim=(1, 2)) + 1e-6)  # (B,)
+            # Q-head reads CLS token + stagnation delta
+            q_input = torch.cat([z_H[:, 0].to(torch.float32), delta.unsqueeze(-1)], dim=-1)  # (B, hidden_size+1)
+        else:
+            # Fallback: same as original HRM — Q-head reads CLS token only
+            q_input = z_H[:, 0].to(torch.float32)  # (B, hidden_size)
+        q_logits = self.q_head(q_input).to(torch.float32)  # (B, 2)
+
+        # SHREK: inject combined error into z_H (AFTER Q-head, only affects carry for next step)
+        # Ablation: can be disabled via config.enable_error_injection=False
+        if self.config.enable_error_injection:
+            # error_encoder maps scalar -> hidden_size vector
+            # alpha follows linear warmup: 0 → alpha_max over warmup steps
+            # scaled by 1/sqrt(hidden_size) so injection is proportional to model size
+            error_emb = self.error_encoder(error.unsqueeze(-1))                    # (B, hidden_size)
+            # SHREK: compute alpha from warmup schedule (not learned)
+            # During warmup, alpha ramps linearly from 0 to alpha_max.
+            # After warmup, alpha stays at alpha_max.
+            # Uses torch.clamp instead of Python min() to stay compatible with torch.compile.
+            with torch.no_grad():
+                if self.training:
+                    self._alpha_step += 1
+                alpha = self.config.alpha_max * torch.clamp(self._alpha_step / self.config.alpha_warmup_steps, max=1.0)
+            scale = math.sqrt(self.config.hidden_size)
+            z_H = z_H + (alpha * error_emb.unsqueeze(1) / scale).to(z_H.dtype)   # (B, seq_len, hidden_size)
+
+        # New carry: store error-injected z_H so next ACT step starts from it
+        new_carry = HierarchicalReasoningModel_ACTV1InnerCarry(
+            z_H=z_H.detach(),
+            z_L=z_L.detach(),
+            # SHREK: store current predictions — next step compares against these for flip rate
+            prev_pred=current_pred.detach(),
+            # SHREK: Q-values written to carry for torch.compile compatibility (not read for Q-targets)
+            prev_q_halt=q_logits[..., 0].detach(),
+            prev_q_continue=q_logits[..., 1].detach(),
+        )
+
+        # SHREK: also return learned_err so pretrain.py can compute auxiliary loss
+        # auxiliary loss trains the estimator: predicted error should match real lm_loss
+        if require_trace:
+            return z_H_trace, new_carry, output, (q_logits[..., 0], q_logits[..., 1]), learned_err
+        else:
+            return new_carry, output, (q_logits[..., 0], q_logits[..., 1]), learned_err
+
+
+class HierarchicalReasoningModel_ACTV1(nn.Module):
+    """ACT wrapper."""
+
+    def __init__(self, config_dict: dict):
+        super().__init__()
+        self.config = HierarchicalReasoningModel_ACTV1Config(**config_dict)
+        self.inner = HierarchicalReasoningModel_ACTV1_Inner(self.config)
+
+    @property
+    def puzzle_emb(self):
+        return self.inner.puzzle_emb
+
+    def initial_carry(self, batch: Dict[str, torch.Tensor]):
+        batch_size = batch["inputs"].shape[0]
+
+        return HierarchicalReasoningModel_ACTV1Carry(
+            inner_carry=self.inner.empty_carry(batch_size),  # Empty is expected, it will be reseted in first pass as all sequences are halted.
+            
+            steps=torch.zeros((batch_size, ), dtype=torch.int32),
+            halted=torch.ones((batch_size, ), dtype=torch.bool),  # Default to halted
+            
+            current_data={k: torch.empty_like(v) for k, v in batch.items()}
+        )
+        
+    # SHREK: removed task_type parameter — error signal is universal, no task rules needed
+    def forward(self, carry: HierarchicalReasoningModel_ACTV1Carry, batch: Dict[str, torch.Tensor], require_trace=False):
+        # -> Tuple[HierarchicalReasoningModel_ACTV1Carry, Dict[str, torch.Tensor], torch.Tensor]:
+        # Update data, carry (removing halted sequences)
+        new_inner_carry = self.inner.reset_carry(carry.halted, carry.inner_carry)
+
+        new_steps = torch.where(carry.halted, 0, carry.steps)
+
+        new_current_data = {k: torch.where(carry.halted.view((-1, ) + (1, ) * (batch[k].ndim - 1)), batch[k], v) for k, v in carry.current_data.items()}
+
+        # SHREK: run inner forward — unpack learned_err for auxiliary loss in pretrain.py
+        if require_trace:
+            z_H_trace, new_inner_carry, logits, (q_halt_logits, q_continue_logits), learned_err = self.inner(new_inner_carry, new_current_data, require_trace=require_trace)
+        else:
+            new_inner_carry, logits, (q_halt_logits, q_continue_logits), learned_err = self.inner(new_inner_carry, new_current_data)
+
+        outputs = {
+            "logits": logits,
+            "q_halt_logits": q_halt_logits,
+            "q_continue_logits": q_continue_logits,
+            "learned_err": learned_err,   # SHREK: for auxiliary loss in pretrain.py
+        }
+        
+        with torch.no_grad():
+            # Step
+            new_steps = new_steps + 1
+            is_last_step = new_steps >= self.config.halt_max_steps
+            
+            halted = is_last_step
+
+            # if training, and ACT is enabled
+            if self.training and (self.config.halt_max_steps > 1):
+                # Halt signal
+                # NOTE: During evaluation, always use max steps, this is to guarantee the same halting steps inside a batch for batching purposes
+                halted = halted | (q_halt_logits > q_continue_logits)
+
+                # Exploration
+                min_halt_steps = (torch.rand_like(q_halt_logits) < self.config.halt_exploration_prob) * torch.randint_like(new_steps, low=2, high=self.config.halt_max_steps + 1)
+
+                halted = halted & (new_steps >= min_halt_steps)
+
+                # SHREK: Q-target via double forward pass (same as original HRM).
+                # Run inner() a second time to get NEXT step's Q-values (step T+1).
+                # Save/restore _alpha_step so the second call doesn't double-count
+                # the warmup — without this, alpha reaches full strength at step ~2500
+                # instead of 5000, destabilizing early training.
+                # NOTE: prev_q fields in carry are not read here — they must stay
+                # in the dataclass for torch.compile compatibility.
+                saved_alpha_step = self.inner._alpha_step.clone()
+                next_q_halt_logits, next_q_continue_logits = self.inner(new_inner_carry, new_current_data)[-2]
+                self.inner._alpha_step.copy_(saved_alpha_step)
+
+                outputs["target_q_continue"] = torch.sigmoid(
+                    torch.where(is_last_step,
+                        next_q_halt_logits,
+                        torch.maximum(next_q_halt_logits, next_q_continue_logits))
+                )
+
+        if require_trace:
+            return HierarchicalReasoningModel_ACTV1Carry(new_inner_carry, new_steps, halted, new_current_data), outputs, new_steps, (q_halt_logits > q_continue_logits), z_H_trace
+        else:
+            return HierarchicalReasoningModel_ACTV1Carry(new_inner_carry, new_steps, halted, new_current_data), outputs, new_steps, (q_halt_logits > q_continue_logits)
