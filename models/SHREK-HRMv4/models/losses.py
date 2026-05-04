@@ -118,6 +118,10 @@ class ACTLossHead(nn.Module):
             lm_min = per_sample_lm_loss.min()
             lm_max = per_sample_lm_loss.max()
             target = (per_sample_lm_loss - lm_min) / (lm_max - lm_min + 1e-6)       # (B,) in [0, 1]
+            # SHREK: cast target to learned_err's dtype (float32) — the LM loss path
+            # runs in float64 (stablemax_cross_entropy promotes for numerical stability),
+            # but learned_err is float32, and F.mse_loss requires matching dtypes.
+            target = target.to(outputs["learned_err"].dtype)
             aux_loss = F.mse_loss(outputs["learned_err"], target, reduction="sum")
             metrics["aux_loss"] = aux_loss.detach()
 

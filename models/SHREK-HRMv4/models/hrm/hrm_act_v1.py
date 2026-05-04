@@ -142,10 +142,10 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         # SHREK: training-progress state for the cosine alpha schedule. pretrain.py
         # calls set_train_progress(step, total_steps) before each forward; alpha is
         # computed inline in forward as alpha_max * 0.5 * (1 + cos(pi * progress)).
-        # Stored as plain Python ints — they never enter the autograd graph or the
-        # checkpoint state_dict.
-        self._current_step = 0
-        self._total_steps = 1
+        # Held as non-persistent long tensors so torch.compile sees a stable graph
+        # (Python ints would trigger a recompile every training step).
+        self.register_buffer('_current_step', torch.tensor(0, dtype=torch.long), persistent=False)
+        self.register_buffer('_total_steps',  torch.tensor(1, dtype=torch.long), persistent=False)
 
         self.puzzle_emb_len = -(self.config.puzzle_emb_ndim // -self.config.hidden_size)  # ceil div
         if self.config.puzzle_emb_ndim > 0:
@@ -226,10 +226,10 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
 
     def set_train_progress(self, current_step: int, total_steps: int):
         # SHREK: pretrain.py calls this each training step so the cosine alpha
-        # schedule in forward knows where in training we are. Plain Python ints
-        # — read inline in forward, never enter the autograd graph or state_dict.
-        self._current_step = int(current_step)
-        self._total_steps = max(1, int(total_steps))
+        # schedule in forward knows where in training we are. Writes in-place into
+        # the long buffers so torch.compile keeps the same graph across steps.
+        self._current_step.fill_(int(current_step))
+        self._total_steps.fill_(max(1, int(total_steps)))
 
 
     # SHREK: removed task_type parameter — error signal is now universal (no task rules needed)
@@ -304,8 +304,10 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             # SHREK: cosine alpha schedule. progress = 0 at training start, 1 at the
             # final step. alpha is full strength at progress=0 and exactly zero at
             # progress=1, so the converged model gets a clean, unperturbed state.
-            progress = min(1.0, self._current_step / self._total_steps)
-            alpha = self.config.alpha_max * 0.5 * (1.0 + math.cos(math.pi * progress))
+            # Tensor math (vs Python floats) keeps the torch.compile graph stable.
+            with torch.no_grad():
+                progress = (self._current_step.to(torch.float32) / self._total_steps.to(torch.float32)).clamp(max=1.0)
+                alpha = self.config.alpha_max * 0.5 * (1.0 + torch.cos(math.pi * progress))
             scale = math.sqrt(self.config.hidden_size)
             z_H = z_H + (alpha * error_emb.unsqueeze(1) / scale).to(z_H.dtype)   # (B, seq_len, hidden_size)
 
