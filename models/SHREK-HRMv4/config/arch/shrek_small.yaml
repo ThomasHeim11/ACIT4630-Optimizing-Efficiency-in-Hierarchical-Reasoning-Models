@@ -1,0 +1,34 @@
+# SHREK-Small — ~7M parameters, competes with TRM-Att (7M).
+# Same hidden_size as Large but half the layers, following TRM's approach.
+# Wide hidden states with fewer layers — keeps training stable while reducing params.
+
+name: hrm.hrm_act_v1@HierarchicalReasoningModel_ACTV1
+loss:
+  name: losses@ACTLossHead
+  loss_type: stablemax_cross_entropy
+
+halt_exploration_prob: 0.1
+halt_max_steps: 16  # same as HRM — fair comparison at equal compute
+
+H_cycles: 2
+L_cycles: 2
+
+# SHREK: 2 layers each level (vs 4 each for Large) — saves params via fewer layers,
+# not by shrinking hidden_size. Keeping hidden_size=512 prevents training collapse.
+H_layers: 2
+L_layers: 2
+
+hidden_size: 512   # same as Large — wide hidden state for stable training
+num_heads: 8       # head_dim = 512/8 = 64
+expansion: 4       # same as HRM baseline — fair comparison
+
+puzzle_emb_ndim: ${.hidden_size}
+
+pos_encodings: rope
+
+# SHREK: error injection magnitude follows a cosine decay across training,
+# starting at alpha_max and reaching exactly zero at the final step.
+alpha_max: 0.01
+
+# SHREK: ablation flag — set to false for the HRM+EMA baseline run.
+enable_error_injection: true

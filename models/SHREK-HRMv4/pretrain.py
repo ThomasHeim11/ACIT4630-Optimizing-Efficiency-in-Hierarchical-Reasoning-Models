@@ -215,6 +215,18 @@ def compute_lr(base_lr: float, config: PretrainConfig, train_state: TrainState):
 # SHREK: get_task_type() removed — error signal is now universal (flip rate + learned estimator).
 # No task rules needed. Works for sudoku, maze, arc, and any future dataset automatically.
 
+
+def _set_train_progress(model, current_step: int, total_steps: int):
+    # SHREK: walk the wrapper chain (torch.compile -> ACTLossHead -> ACT wrapper)
+    # to reach a module with set_train_progress, then call it. The cosine alpha
+    # schedule inside the inner model reads these values each forward.
+    m = model
+    for attr in ("_orig_mod", "model"):
+        m = getattr(m, attr, m)
+    if hasattr(m, "set_train_progress"):
+        m.set_train_progress(current_step, total_steps)
+
+
 def train_batch(config: PretrainConfig, train_state: TrainState, batch: Any, global_batch_size: int, rank: int, world_size: int):
     train_state.step += 1
     if train_state.step > train_state.total_steps:  # At most train_total_steps
@@ -227,6 +239,11 @@ def train_batch(config: PretrainConfig, train_state: TrainState, batch: Any, glo
     if train_state.carry is None:
         with torch.device("cuda"):
             train_state.carry = train_state.model.initial_carry(batch)  # type: ignore
+
+    # SHREK: tell the inner model where we are in training so its cosine alpha
+    # schedule can compute progress = current_step / total_steps. Done here, just
+    # before forward, so the value is fresh on every step.
+    _set_train_progress(train_state.model, train_state.step, train_state.total_steps)
 
     # Forward — SHREK: no task_type needed; aux_loss is computed inside ACTLossHead
     train_state.carry, loss, metrics, _, _, _ = train_state.model(carry=train_state.carry, batch=batch, return_keys=[])

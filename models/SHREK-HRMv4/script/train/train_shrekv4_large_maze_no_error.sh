@@ -1,15 +1,15 @@
 #!/bin/bash -l
-#SBATCH --job-name=shrek_large_maze
+#SBATCH --job-name=sv4_l_maz_ne
 #SBATCH --partition=gh200q
 #SBATCH --gres=gpu:1
-#SBATCH --output=/home/thheim/HMR/logs/shrek_large_maze_%j.log
-#SBATCH --error=/home/thheim/HMR/logs/shrek_large_maze_%j.err
+#SBATCH --output=/home/thheim/HMR/logs/shrekv4_large_maze_no_error_%j.log
+#SBATCH --error=/home/thheim/HMR/logs/shrekv4_large_maze_no_error_%j.err
 
 source /etc/profile.d/modules.sh
 source ~/.bash_profile
 module load cuda12.6/toolkit/12.6.3
 
-cd ~/HMR/models/SHREK-HRM
+cd ~/HMR/models/SHREK-HRMv4
 
 OMP_NUM_THREADS=8 python3 pretrain.py \
     arch=shrek_large \
@@ -21,6 +21,7 @@ OMP_NUM_THREADS=8 python3 pretrain.py \
     puzzle_emb_lr=1e-4 \
     weight_decay=1.0 \
     puzzle_emb_weight_decay=1.0 \
-    +run_name=SHREK_Large_Maze \
-    +project_name=HRM_Maze_Comparison \
+    arch.enable_error_injection=False \
+    +run_name=SHREKV4_Large_Maze_NoError \
+    +project_name=SHREKV4_Maze \
     +ema=True

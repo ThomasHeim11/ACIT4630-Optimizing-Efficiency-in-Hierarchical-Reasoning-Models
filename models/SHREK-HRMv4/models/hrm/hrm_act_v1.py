@@ -20,10 +20,6 @@ class HierarchicalReasoningModel_ACTV1InnerCarry:
     # SHREK: prev_pred stores last step's argmax predictions for flip rate computation.
     # zeros = fresh start (first step after init or reset gives flip_rate ≈ 1.0)
     prev_pred: torch.Tensor        # (B, seq_len) int32
-    # SHREK: Q-values cached in carry — no longer used for Q-targets (see Bug 4),
-    # but kept because removing them causes torch.compile regression.
-    prev_q_halt: torch.Tensor      # (B,) float32
-    prev_q_continue: torch.Tensor  # (B,) float32
 
 
 @dataclass
@@ -62,14 +58,17 @@ class HierarchicalReasoningModel_ACTV1Config(BaseModel):
     halt_max_steps: int
     halt_exploration_prob: float
 
-    # SHREK: error injection warmup — ramps alpha from 0 to alpha_max over warmup steps.
-    # Prevents small models from collapsing before the error estimator is accurate.
+    # SHREK: error injection magnitude follows a pure cosine decay across
+    # training: alpha = alpha_max * 0.5 * (1 + cos(pi * step / total_steps)).
+    # Full strength at step 0, exactly zero at the final step. The flat-near-zero
+    # start of the cosine replaces the linear warmup used in earlier iterations
+    # — no separate warmup phase is needed.
     alpha_max: float = 0.01
-    alpha_warmup_steps: int = 5000
 
-    # SHREK ablation flags — disable components from training scripts
-    enable_error_injection: bool = True    # Error-Conditioned Injection (flip rate + learned estimator)
-    enable_stagnation_delta: bool = True   # Stagnation-Aware Q-head (delta fed to Q-head)
+    # SHREK ablation flag — set to False for the HRM+EMA baseline run with no
+    # error injection. Stagnation delta was removed entirely (the ablation in
+    # earlier iterations showed it cost ~2pt of accuracy).
+    enable_error_injection: bool = True
 
     forward_dtype: str = "bfloat16"
 
@@ -128,21 +127,25 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
 
         self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.vocab_size, bias=False)
-        # SHREK: Q-head input size depends on stagnation delta flag
-        q_head_input_size = self.config.hidden_size + (1 if self.config.enable_stagnation_delta else 0)
-        self.q_head       = CastedLinear(q_head_input_size, 2, bias=True)
+        # SHREK: Q-head reads the CLS-position of z_H. Stagnation delta was removed,
+        # so the input size is just hidden_size (no extra concatenated feature).
+        self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True)
 
-        # SHREK: error_encoder maps the scalar error score -> hidden_size vector for injection into z_H
-        # alpha follows a linear warmup schedule (0 → alpha_max over warmup steps).
-        # This lets the error estimator train before its signal affects z_H.
-        self.error_encoder  = nn.Linear(1, self.config.hidden_size)
-        # SHREK: step counter for alpha warmup (not a learned parameter)
-        self.register_buffer('_alpha_step', torch.tensor(0, dtype=torch.long))
-        # SHREK: error_estimator reads z_H and predicts how wrong the model is.
-        # trained via auxiliary loss in pretrain.py using the real lm_loss as target.
-        # catches "stuck but wrong" — a model confidently on the wrong answer.
-        # flip rate catches oscillation; estimator catches confident-but-wrong.
+        # SHREK: error_encoder maps the scalar error score -> hidden_size vector for
+        # injection into z_H. error_estimator reads z_H and predicts how wrong the
+        # model is — flip rate catches oscillation, the estimator catches stuck-but-
+        # wrong (model confidently on a wrong answer). The estimator is trained via
+        # the auxiliary MSE loss in losses.py against the real lm_loss target.
+        self.error_encoder   = nn.Linear(1, self.config.hidden_size)
         self.error_estimator = nn.Linear(self.config.hidden_size, 1)
+
+        # SHREK: training-progress state for the cosine alpha schedule. pretrain.py
+        # calls set_train_progress(step, total_steps) before each forward; alpha is
+        # computed inline in forward as alpha_max * 0.5 * (1 + cos(pi * progress)).
+        # Stored as plain Python ints — they never enter the autograd graph or the
+        # checkpoint state_dict.
+        self._current_step = 0
+        self._total_steps = 1
 
         self.puzzle_emb_len = -(self.config.puzzle_emb_ndim // -self.config.hidden_size)  # ceil div
         if self.config.puzzle_emb_ndim > 0:
@@ -200,32 +203,33 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         return HierarchicalReasoningModel_ACTV1InnerCarry(
             z_H=torch.empty(batch_size, self.config.seq_len + self.puzzle_emb_len, self.config.hidden_size, dtype=self.forward_dtype),
             z_L=torch.empty(batch_size, self.config.seq_len + self.puzzle_emb_len, self.config.hidden_size, dtype=self.forward_dtype),
-            # SHREK: zeros = no previous prediction — first step gives flip_rate ≈ 1.0
-            # device=H_init.device ensures prev_pred is on CUDA, matching z_H and logits
+            # SHREK: zeros = no previous prediction — first step gives flip_rate ≈ 1.0.
+            # device=H_init.device ensures prev_pred is on CUDA, matching z_H and logits.
             prev_pred=torch.zeros(batch_size, self.config.seq_len, dtype=torch.int32, device=self.H_init.device),
-            prev_q_halt=torch.full((batch_size,), -5.0, device=self.H_init.device),
-            prev_q_continue=torch.full((batch_size,), -5.0, device=self.H_init.device),
         )
-        
+
     def reset_carry(self, reset_flag: torch.Tensor, carry: HierarchicalReasoningModel_ACTV1InnerCarry):
         # SHREK: zero out prev_pred for reset sequences so they start fresh.
-        # a reset sequence is one that just halted — it will solve a new puzzle next.
-        # zeroing prev_pred means first step gives flip_rate ≈ 1.0 (maximum uncertainty).
+        # A reset sequence is one that just halted — it will solve a new puzzle next.
+        # Zeroing prev_pred means first step gives flip_rate ≈ 1.0 (maximum uncertainty).
         new_prev_pred = torch.where(
             reset_flag.view(-1, 1),
             torch.zeros_like(carry.prev_pred),
             carry.prev_pred
         )
-        new_prev_q_halt     = torch.where(reset_flag, torch.full_like(carry.prev_q_halt,     -5.0), carry.prev_q_halt)
-        new_prev_q_continue = torch.where(reset_flag, torch.full_like(carry.prev_q_continue, -5.0), carry.prev_q_continue)
 
         return HierarchicalReasoningModel_ACTV1InnerCarry(
             z_H=torch.where(reset_flag.view(-1, 1, 1), self.H_init, carry.z_H),
             z_L=torch.where(reset_flag.view(-1, 1, 1), self.L_init, carry.z_L),
             prev_pred=new_prev_pred,
-            prev_q_halt=new_prev_q_halt,
-            prev_q_continue=new_prev_q_continue,
         )
+
+    def set_train_progress(self, current_step: int, total_steps: int):
+        # SHREK: pretrain.py calls this each training step so the cosine alpha
+        # schedule in forward knows where in training we are. Plain Python ints
+        # — read inline in forward, never enter the autograd graph or state_dict.
+        self._current_step = int(current_step)
+        self._total_steps = max(1, int(total_steps))
 
 
     # SHREK: removed task_type parameter — error signal is now universal (no task rules needed)
@@ -286,48 +290,31 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         # learned_err becomes accurate over training and takes over as the stronger signal
         error = 0.5 * flip_err + 0.5 * learned_err                            # (B,)
 
-        # SHREK Component 2: Stagnation-Aware Q-head
-        # Ablation: can be disabled via config.enable_stagnation_delta=False
-        if self.config.enable_stagnation_delta:
-            # Compute how much z_H changed during this reasoning step.
-            # CRITICAL: detach so Q-head gradients don't flow through all positions of z_H.
-            z_H_f = z_H.detach().float()
-            z_H_start = carry.z_H.detach().float()
-            delta = torch.norm(z_H_f - z_H_start, dim=(1, 2)) / (torch.norm(z_H_start, dim=(1, 2)) + 1e-6)  # (B,)
-            # Q-head reads CLS token + stagnation delta
-            q_input = torch.cat([z_H[:, 0].to(torch.float32), delta.unsqueeze(-1)], dim=-1)  # (B, hidden_size+1)
-        else:
-            # Fallback: same as original HRM — Q-head reads CLS token only
-            q_input = z_H[:, 0].to(torch.float32)  # (B, hidden_size)
+        # SHREK: Q-head reads the CLS-position of z_H to produce halt/continue logits.
+        q_input = z_H[:, 0].to(torch.float32)  # (B, hidden_size)
         q_logits = self.q_head(q_input).to(torch.float32)  # (B, 2)
 
-        # SHREK: inject combined error into z_H (AFTER Q-head, only affects carry for next step)
-        # Ablation: can be disabled via config.enable_error_injection=False
+        # SHREK: inject combined error into z_H. This runs AFTER the Q-head so the
+        # injection only affects the carry handed to the next ACT step — the current
+        # step's halt decision sees a clean state. The ablation flag lets training
+        # scripts run a clean HRM+EMA baseline with no error injection at all.
         if self.config.enable_error_injection:
             # error_encoder maps scalar -> hidden_size vector
-            # alpha follows linear warmup: 0 → alpha_max over warmup steps
-            # scaled by 1/sqrt(hidden_size) so injection is proportional to model size
             error_emb = self.error_encoder(error.unsqueeze(-1))                    # (B, hidden_size)
-            # SHREK: compute alpha from warmup schedule (not learned)
-            # During warmup, alpha ramps linearly from 0 to alpha_max.
-            # After warmup, alpha stays at alpha_max.
-            # Uses torch.clamp instead of Python min() to stay compatible with torch.compile.
-            with torch.no_grad():
-                if self.training:
-                    self._alpha_step += 1
-                alpha = self.config.alpha_max * torch.clamp(self._alpha_step / self.config.alpha_warmup_steps, max=1.0)
+            # SHREK: cosine alpha schedule. progress = 0 at training start, 1 at the
+            # final step. alpha is full strength at progress=0 and exactly zero at
+            # progress=1, so the converged model gets a clean, unperturbed state.
+            progress = min(1.0, self._current_step / self._total_steps)
+            alpha = self.config.alpha_max * 0.5 * (1.0 + math.cos(math.pi * progress))
             scale = math.sqrt(self.config.hidden_size)
             z_H = z_H + (alpha * error_emb.unsqueeze(1) / scale).to(z_H.dtype)   # (B, seq_len, hidden_size)
 
-        # New carry: store error-injected z_H so next ACT step starts from it
+        # SHREK: store error-injected z_H so the next ACT step starts from it,
+        # and store current predictions so the next step can compute flip rate.
         new_carry = HierarchicalReasoningModel_ACTV1InnerCarry(
             z_H=z_H.detach(),
             z_L=z_L.detach(),
-            # SHREK: store current predictions — next step compares against these for flip rate
             prev_pred=current_pred.detach(),
-            # SHREK: Q-values written to carry for torch.compile compatibility (not read for Q-targets)
-            prev_q_halt=q_logits[..., 0].detach(),
-            prev_q_continue=q_logits[..., 1].detach(),
         )
 
         # SHREK: also return learned_err so pretrain.py can compute auxiliary loss
@@ -349,6 +336,11 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
     @property
     def puzzle_emb(self):
         return self.inner.puzzle_emb
+
+    def set_train_progress(self, current_step: int, total_steps: int):
+        # SHREK: forwarded to the inner model so its cosine alpha schedule can
+        # compute progress = current_step / total_steps each forward.
+        self.inner.set_train_progress(current_step, total_steps)
 
     def initial_carry(self, batch: Dict[str, torch.Tensor]):
         batch_size = batch["inputs"].shape[0]
@@ -403,16 +395,12 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
 
                 halted = halted & (new_steps >= min_halt_steps)
 
-                # SHREK: Q-target via double forward pass (same as original HRM).
-                # Run inner() a second time to get NEXT step's Q-values (step T+1).
-                # Save/restore _alpha_step so the second call doesn't double-count
-                # the warmup — without this, alpha reaches full strength at step ~2500
-                # instead of 5000, destabilizing early training.
-                # NOTE: prev_q fields in carry are not read here — they must stay
-                # in the dataclass for torch.compile compatibility.
-                saved_alpha_step = self.inner._alpha_step.clone()
+                # SHREK: Q-target via double forward pass — run inner() a second
+                # time to get the NEXT step's Q-values (step T+1) for the TD target.
+                # The cosine alpha schedule reads `_current_step` (set externally
+                # from pretrain.py), so the second call sees the same alpha as the
+                # first — no save/restore is needed.
                 next_q_halt_logits, next_q_continue_logits = self.inner(new_inner_carry, new_current_data)[-2]
-                self.inner._alpha_step.copy_(saved_alpha_step)
 
                 outputs["target_q_continue"] = torch.sigmoid(
                     torch.where(is_last_step,

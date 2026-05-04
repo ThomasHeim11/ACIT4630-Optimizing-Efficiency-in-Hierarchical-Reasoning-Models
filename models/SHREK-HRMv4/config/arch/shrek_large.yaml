@@ -1,12 +1,9 @@
-# SHREK-Large — ~27M parameters, competes with HRM and AugmentedHRM
-# Same parameter count as HRM but with SHREK improvements:
-#   - universal flip rate + learned error estimator (no task rules)
-#   - error injection replaces random perturbation
-#   - stagnation delta fed into Q-head
-#   - Q-target cached in carry (no second forward pass)
+# SHREK-Large — ~27M parameters, same parameter count as HRM.
+# SHREK additions on top of HRM:
+#   - universal flip rate + learned error estimator (no task-specific rules)
+#   - error injection into z_H, scheduled by a cosine decay across training
 #
-# Same base config as hrm_v1.yaml (expansion=4, halt_max_steps=16)
-# with SHREK-specific components in the model code.
+# Same base config as hrm_v1.yaml (expansion=4, halt_max_steps=16).
 
 name: hrm.hrm_act_v1@HierarchicalReasoningModel_ACTV1
 loss:
@@ -30,6 +27,9 @@ puzzle_emb_ndim: ${.hidden_size}
 
 pos_encodings: rope
 
-# SHREK ablation flags — override from training scripts to disable components
-enable_error_injection: true    # Error-Conditioned Injection (flip rate + learned estimator)
-enable_stagnation_delta: true   # Stagnation-Aware Q-head (delta fed to Q-head)
+# SHREK: error injection magnitude follows a cosine decay across training,
+# starting at alpha_max and reaching exactly zero at the final step.
+alpha_max: 0.01
+
+# SHREK: ablation flag — set to false for the HRM+EMA baseline run.
+enable_error_injection: true
