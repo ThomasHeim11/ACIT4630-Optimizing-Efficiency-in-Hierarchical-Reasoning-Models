@@ -42,10 +42,11 @@ evaluations:
     expected_accuracy: 0.63
 
   # ----- Maze-Hard (SHREK only) -----
+  # SHREK Large peaks later than Tiny: ~step 70k-100k. Tiny peaks ~step 46872.
   - name: "SHREK Large"
     task: "Maze-Hard"
     model_code_dir: "models/SHREK-HRM"
-    checkpoint_subpath: "maze-hard/shrek-large/step_46872"
+    checkpoint_subpath: "maze-hard/shrek-large/step_85932"
     expected_accuracy: 0.83
 
   - name: "SHREK Tiny"

@@ -101,23 +101,13 @@ def evaluate_checkpoint(model_code_dir: Path, checkpoint_path: Path):
 
 def print_results(results):
     print()
-    print("=" * 88)
-    print(f"{'Model':<22} {'Task':<18} {'Expected':>10} {'Actual':>10} {'Δ':>9} {'Status':>8}")
-    print("-" * 88)
+    print("=" * 60)
+    print(f"{'Model':<22} {'Task':<18} {'Accuracy':>10}")
+    print("-" * 60)
     for r in results:
-        if r["actual"] is None:
-            print(
-                f"{r['name']:<22} {r['task']:<18} {r['expected']:>9.1%} "
-                f"{'n/a':>10} {'n/a':>9} {'FAIL':>8}"
-            )
-            continue
-        delta = r["actual"] - r["expected"]
-        status = "OK" if abs(delta) < 0.05 else "OFF"
-        print(
-            f"{r['name']:<22} {r['task']:<18} {r['expected']:>9.1%} "
-            f"{r['actual']:>9.1%} {delta:>+9.1%} {status:>8}"
-        )
-    print("=" * 88)
+        actual = f"{r['actual']:.1%}" if r["actual"] is not None else "n/a"
+        print(f"{r['name']:<22} {r['task']:<18} {actual:>10}")
+    print("=" * 60)
 
 
 def main():
