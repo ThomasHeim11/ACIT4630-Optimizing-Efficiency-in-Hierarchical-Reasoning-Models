@@ -24,33 +24,32 @@ data_dir: "data"       # test data lands here  (matches teacher's required `data
 # checkpoint_subpath here points to one `step_NNNNN` file inside that model's folder.
 
 evaluations:
-  # SMOKE TEST: using last checkpoint of each run to verify the pipeline works
-  # end-to-end. Expect "OFF" status because final-step accuracy is below the
-  # paper's best-checkpoint values. Switch to peak steps (commented below)
-  # after the pipeline is confirmed working.
+  # Peak (best-checkpoint) accuracy as reported in the paper Tables II and III.
+  # Steps were verified locally on the cluster: SHREK Large Sudoku step_26040 → 63.5%,
+  # SHREK Tiny Sudoku step_37758 → 63.1%; Maze peak ≈ step_46872 from training charts.
 
   # ----- Sudoku-Extreme (SHREK only — HRM/TRM baselines cited from prior papers) -----
   - name: "SHREK Large"
     task: "Sudoku-Extreme"
     model_code_dir: "models/SHREK-HRM"
-    checkpoint_subpath: "sudoku-extreme/shrek-large/step_52080"   # smoke; peak ≈ step_26040
+    checkpoint_subpath: "sudoku-extreme/shrek-large/step_26040"
     expected_accuracy: 0.65
 
   - name: "SHREK Tiny"
     task: "Sudoku-Extreme"
     model_code_dir: "models/SHREK-HRM"
-    checkpoint_subpath: "sudoku-extreme/shrek-tiny/step_52080"    # smoke; peak ≈ step_26040
+    checkpoint_subpath: "sudoku-extreme/shrek-tiny/step_37758"
     expected_accuracy: 0.63
 
   # ----- Maze-Hard (SHREK only) -----
   - name: "SHREK Large"
     task: "Maze-Hard"
     model_code_dir: "models/SHREK-HRM"
-    checkpoint_subpath: "maze-hard/shrek-large/step_156240"       # smoke; peak ≈ step_46872
+    checkpoint_subpath: "maze-hard/shrek-large/step_46872"
     expected_accuracy: 0.83
 
   - name: "SHREK Tiny"
     task: "Maze-Hard"
     model_code_dir: "models/SHREK-HRM"
-    checkpoint_subpath: "maze-hard/shrek-tiny/step_156240"        # smoke; peak ≈ step_46872
+    checkpoint_subpath: "maze-hard/shrek-tiny/step_46872"
     expected_accuracy: 0.73
