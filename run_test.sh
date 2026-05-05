@@ -14,4 +14,4 @@ source ~/.bash_profile
 module load cuda12.6/toolkit/12.6.3
 
 cd ~/HMR
-python test.py
+python3 test.py
