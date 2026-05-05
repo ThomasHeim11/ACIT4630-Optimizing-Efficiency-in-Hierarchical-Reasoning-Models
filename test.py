@@ -120,9 +120,15 @@ def main():
     ensure_dir_populated(model_dir, cfg["hf_checkpoints_repo"], repo_type="model")
     ensure_dir_populated(data_dir, cfg["hf_dataset_repo"], repo_type="dataset")
 
-    # 2. Run each evaluation.
+    # 2. Run each evaluation. Sleep briefly between subprocesses so the GPU
+    #    driver fully releases state before the next evaluate.py spawns —
+    #    consecutive CUDA loads without a pause have caused numpy/torch
+    #    import failures on this cluster.
+    import time
     results = []
-    for entry in cfg["evaluations"]:
+    for i, entry in enumerate(cfg["evaluations"]):
+        if i > 0:
+            time.sleep(5)
         ckpt = model_dir / entry["checkpoint_subpath"]
         actual = evaluate_checkpoint(REPO_ROOT / entry["model_code_dir"], ckpt)
         results.append({
