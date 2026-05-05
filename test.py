@@ -28,6 +28,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Disable HuggingFace's xet-based downloads. The xet client has known native-library
+# issues on some systems (missing .so files); the regular HTTP download path is more
+# reliable. Set before importing huggingface_hub so the env var is honored.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent
