@@ -1,6 +1,6 @@
 # SHREK-Small — ~7M parameters, competes with TRM-Att (7M).
-# Same hidden_size as Large but half the layers, following TRM's approach.
-# Wide hidden states with fewer layers — keeps training stable while reducing params.
+# Narrows hidden_size from Large (512 → 384) and keeps the full hierarchical
+# layer count (H=2, L=2) so the H/L hierarchy is preserved at small scale.
 
 name: hrm.hrm_act_v1@HierarchicalReasoningModel_ACTV1
 loss:
@@ -13,13 +13,12 @@ halt_max_steps: 16  # same as HRM — fair comparison at equal compute
 H_cycles: 2
 L_cycles: 2
 
-# SHREK: 2 layers each level (vs 4 each for Large) — saves params via fewer layers,
-# not by shrinking hidden_size. Keeping hidden_size=512 prevents training collapse.
+# SHREK: 2 layers each level — preserves the H/L hierarchy at the small scale.
 H_layers: 2
 L_layers: 2
 
-hidden_size: 512   # same as Large — wide hidden state for stable training
-num_heads: 8       # head_dim = 512/8 = 64
+hidden_size: 384   # narrowed from 512 to hit ~7M total params
+num_heads: 6       # head_dim = 384/6 = 64 — same head dim as Large
 expansion: 4       # same as HRM baseline — fair comparison
 
 puzzle_emb_ndim: ${.hidden_size}

@@ -1,9 +1,9 @@
 #!/bin/bash -l
-#SBATCH --job-name=sv4_s_maz
+#SBATCH --job-name=sv4_s_maz_nem
 #SBATCH --partition=gh200q
 #SBATCH --gres=gpu:1
-#SBATCH --output=/home/thheim/HMR/logs/shrekv4_small_maze_%j.log
-#SBATCH --error=/home/thheim/HMR/logs/shrekv4_small_maze_%j.err
+#SBATCH --output=/home/thheim/HMR/logs/shrekv4_small_maze_noema_%j.log
+#SBATCH --error=/home/thheim/HMR/logs/shrekv4_small_maze_noema_%j.err
 
 source /etc/profile.d/modules.sh
 source ~/.bash_profile
@@ -22,6 +22,6 @@ OMP_NUM_THREADS=8 python3 pretrain.py \
     weight_decay=1.0 \
     puzzle_emb_weight_decay=1.0 \
     arch.enable_error_injection=True \
-    +run_name=SHREKV4_Small_Maze_Full \
+    +run_name=SHREKV4_Small_Maze_Full_NoEMA \
     +project_name=SHREKV4_Maze \
-    +ema=True
+    +ema=False
