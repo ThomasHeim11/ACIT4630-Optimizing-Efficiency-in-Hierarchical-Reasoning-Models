@@ -32,13 +32,13 @@ evaluations:
   - name: "SHREK Large"
     task: "Sudoku-Extreme"
     model_code_dir: "models/SHREK-HRM"
-    checkpoint_subpath: "sudoku-extreme/shrek-large/step_26040"
+    checkpoint_subpath: "shrek-large/step_26040"
     expected_accuracy: 0.65
 
   - name: "SHREK Tiny"
     task: "Sudoku-Extreme"
     model_code_dir: "models/SHREK-HRM"
-    checkpoint_subpath: "sudoku-extreme/shrek-tiny/step_37758"
+    checkpoint_subpath: "shrek-tiny/step_37758"
     expected_accuracy: 0.63
 
   # ----- Maze-Hard (SHREK only) -----
