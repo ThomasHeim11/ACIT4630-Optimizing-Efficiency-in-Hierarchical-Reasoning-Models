@@ -1,0 +1,56 @@
+# Top-level configuration for test.py.
+# All paths are relative to the repository root.
+#
+# This file (and not test.py) is where every path/setting lives, so test.py can
+# run unmodified per the assignment requirement.
+
+# ----- HuggingFace repos (auto-downloaded on first run if local dirs are empty) -----
+hf_checkpoints_repo: "ThomasHeim/HRM-Reproduction-Checkpoints"
+hf_dataset_repo: "ThomasHeim/HRM-dataset"
+
+# ----- Local directory layout (mapped to teacher's required structure) -----
+model_dir: "model"     # checkpoints land here (matches teacher's required `model/`)
+data_dir: "data"       # test data lands here  (matches teacher's required `data/`)
+
+# ----- Evaluations to run -----
+# Each entry calls the model's evaluate.py with `checkpoint=<model_dir>/<checkpoint_subpath>`.
+# `expected_accuracy` is the value reported in the paper (Tables II, III).
+# `model_code_dir` is the directory containing pretrain.py + evaluate.py.
+#
+# The HuggingFace repo layout is:
+#     sudoku-extreme/<model-name>/all_config.yaml
+#     sudoku-extreme/<model-name>/step_NNNNN
+# evaluate.py reads `all_config.yaml` from the checkpoint's parent dir, so each
+# checkpoint_subpath here points to one `step_NNNNN` file inside that model's folder.
+
+evaluations:
+  # SMOKE TEST: using last checkpoint of each run to verify the pipeline works
+  # end-to-end. Expect "OFF" status because final-step accuracy is below the
+  # paper's best-checkpoint values. Switch to peak steps (commented below)
+  # after the pipeline is confirmed working.
+
+  # ----- Sudoku-Extreme (SHREK only — HRM/TRM baselines cited from prior papers) -----
+  - name: "SHREK Large"
+    task: "Sudoku-Extreme"
+    model_code_dir: "models/SHREK-HRM"
+    checkpoint_subpath: "sudoku-extreme/shrek-large/step_52080"   # smoke; peak ≈ step_26040
+    expected_accuracy: 0.65
+
+  - name: "SHREK Tiny"
+    task: "Sudoku-Extreme"
+    model_code_dir: "models/SHREK-HRM"
+    checkpoint_subpath: "sudoku-extreme/shrek-tiny/step_52080"    # smoke; peak ≈ step_26040
+    expected_accuracy: 0.63
+
+  # ----- Maze-Hard (SHREK only) -----
+  - name: "SHREK Large"
+    task: "Maze-Hard"
+    model_code_dir: "models/SHREK-HRM"
+    checkpoint_subpath: "maze-hard/shrek-large/step_156240"       # smoke; peak ≈ step_46872
+    expected_accuracy: 0.83
+
+  - name: "SHREK Tiny"
+    task: "Maze-Hard"
+    model_code_dir: "models/SHREK-HRM"
+    checkpoint_subpath: "maze-hard/shrek-tiny/step_156240"        # smoke; peak ≈ step_46872
+    expected_accuracy: 0.73
