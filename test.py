@@ -85,8 +85,10 @@ def evaluate_checkpoint(model_code_dir: Path, checkpoint_path: Path):
     )
     output = result.stdout + result.stderr
 
-    # evaluate.py prints the metrics dict at the end. Match the exact_accuracy entry.
-    m = re.search(r"['\"]?all[/\.]exact_accuracy['\"]?\s*[:=]\s*([\d\.eE+-]+)", output)
+    # evaluate.py prints the metrics dict at the end. The format is a Python repr
+    # like `{'all': {'accuracy': X, 'exact_accuracy': Y, ...}}`. Match the
+    # exact_accuracy value directly (only one such key in the dict).
+    m = re.search(r"['\"]exact_accuracy['\"]\s*:\s*([\d\.eE+-]+)", output)
     if m:
         return float(m.group(1))
 
