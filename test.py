@@ -73,23 +73,14 @@ def ensure_dir_populated(local_dir: Path, hf_repo: str, repo_type: str = "model"
     )
 
 
-# Inline evaluation script — runs as `python -c` subprocess for each (model, task).
-# Each spawn is a fresh Python process so SHREK / HRM / TRM `pretrain` modules
-# don't collide in sys.modules. Auto-detects API differences:
-#   - TRM has `create_evaluators` and an extra `cpu_group` arg in evaluate()
-#   - SHREK/HRM lack those
+# Inline evaluation script — runs as `python -c` subprocess so each call gets a
+# fresh CUDA context and clean module state. test.py only evaluates SHREK
+# models, so this script targets SHREK's pretrain.py API directly.
 INLINE_EVAL = r"""
 import os, sys, yaml, torch
 sys.path.insert(0, os.getcwd())
 
 from pretrain import PretrainConfig, init_train_state, create_dataloader, evaluate as _evaluate
-
-# Optional TRM-only helper.
-try:
-    from pretrain import create_evaluators
-    _has_evaluators = True
-except ImportError:
-    _has_evaluators = False
 
 ckpt = sys.argv[1]
 ckpt_dir = os.path.dirname(ckpt)
@@ -98,34 +89,22 @@ with open(os.path.join(ckpt_dir, 'all_config.yaml')) as f:
 config.eval_save_outputs = []
 config.checkpoint_path = ckpt_dir
 
-# Dataloaders. Most pretrain.py implementations accept `test_set_mode`; if this
-# fork doesn't, retry without it.
-def _make_loader(split, test_mode):
-    try:
-        return create_dataloader(
-            config, split,
-            test_set_mode=test_mode, epochs_per_iter=1,
-            global_batch_size=config.global_batch_size,
-            rank=0, world_size=1,
-        )
-    except TypeError:
-        return create_dataloader(
-            config, split,
-            epochs_per_iter=1,
-            global_batch_size=config.global_batch_size,
-            rank=0, world_size=1,
-        )
+train_loader, train_metadata = create_dataloader(
+    config, 'train',
+    test_set_mode=False, epochs_per_iter=1,
+    global_batch_size=config.global_batch_size,
+    rank=0, world_size=1,
+)
+eval_loader, eval_metadata = create_dataloader(
+    config, 'test',
+    test_set_mode=True, epochs_per_iter=1,
+    global_batch_size=config.global_batch_size,
+    rank=0, world_size=1,
+)
 
-train_loader, train_metadata = _make_loader('train', False)
-eval_loader,  eval_metadata  = _make_loader('test',  True)
+train_state = init_train_state(config, train_metadata, world_size=1)
 
-# init_train_state has slightly different keyword sets across forks.
-try:
-    train_state = init_train_state(config, train_metadata, world_size=1)
-except TypeError:
-    train_state = init_train_state(config, train_metadata, rank=0, world_size=1)
-
-# Load checkpoint, unwrap torch.compile prefix if needed.
+# Load checkpoint, unwrap torch.compile prefix if present.
 state = torch.load(ckpt, map_location='cuda')
 try:
     train_state.model.load_state_dict(state, assign=True)
@@ -143,23 +122,10 @@ if fname.startswith('step_'):
 train_state.model.eval()
 print('Starting evaluation', flush=True)
 
-# evaluate() signature differs: TRM needs `evaluators` and `cpu_group`.
-try:
-    metrics = _evaluate(
-        config, train_state, eval_loader, eval_metadata,
-        rank=0, world_size=1,
-    )
-except TypeError:
-    evaluators = []
-    if _has_evaluators:
-        try:
-            evaluators = create_evaluators(config, eval_metadata)
-        except Exception:
-            evaluators = []
-    metrics = _evaluate(
-        config, train_state, eval_loader, eval_metadata,
-        evaluators=evaluators, rank=0, world_size=1, cpu_group=None,
-    )
+metrics = _evaluate(
+    config, train_state, eval_loader, eval_metadata,
+    rank=0, world_size=1,
+)
 
 if metrics is not None:
     print(metrics)

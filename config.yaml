@@ -24,9 +24,12 @@ data_dir: "data"       # test data lands here  (matches teacher's required `data
 # checkpoint_subpath here points to one `step_NNNNN` file inside that model's folder.
 
 evaluations:
-  # Peak (best-checkpoint) accuracy as reported in the paper Tables II and III.
   # SHREK Large Sudoku step_26040 → 63.5% verified; SHREK Small Sudoku step_37758
-  # → 63.1% verified. Maze peaks ≈ step_46872 (Tiny) / step_85932 (Large) from charts.
+  # → 63.1% verified. Maze peaks ≈ step_46872 (Small) / step_85932 (Large) from charts.
+  # Per teacher's requirement, test.py reproduces only the contributions of this work
+  # (SHREK Large and SHREK Small). Baseline numbers for HRM and TRM Attention are
+  # reported in the paper's tables and were trained with the same setup, but are not
+  # re-evaluated by test.py.
 
   # ----- Sudoku-Extreme -----
   - name: "SHREK Large"
@@ -41,18 +44,6 @@ evaluations:
     checkpoint_subpath: "sudoku-extreme/shrek-tiny/step_37758"
     expected_accuracy: 0.63
 
-  - name: "Original HRM"
-    task: "Sudoku-Extreme"
-    model_code_dir: "source/HRM(Original)/HRM-main"
-    checkpoint_subpath: "sudoku-extreme/original-hrm/step_52080"
-    expected_accuracy: 0.53
-
-  - name: "TRM Attention"
-    task: "Sudoku-Extreme"
-    model_code_dir: "source/TinyRecursiveModels"
-    checkpoint_subpath: "sudoku-extreme/trm-attention/step_52080"
-    expected_accuracy: 0.70
-
   # ----- Maze-Hard -----
   - name: "SHREK Large"
     task: "Maze-Hard"
@@ -65,15 +56,3 @@ evaluations:
     model_code_dir: "source/SHREK-HRM"
     checkpoint_subpath: "maze-hard/shrek-tiny/step_46872"
     expected_accuracy: 0.73
-
-  - name: "Original HRM"
-    task: "Maze-Hard"
-    model_code_dir: "source/HRM(Original)/HRM-main"
-    checkpoint_subpath: "maze-hard/original-hrm/step_156240"
-    expected_accuracy: 0.75
-
-  - name: "TRM Attention"
-    task: "Maze-Hard"
-    model_code_dir: "source/TinyRecursiveModels"
-    checkpoint_subpath: "maze-hard/trm-attention/step_156240"
-    expected_accuracy: 0.87
