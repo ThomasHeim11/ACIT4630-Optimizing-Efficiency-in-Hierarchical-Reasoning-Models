@@ -15,7 +15,7 @@ Updated based on the latest `main.tex` revision.
 - [x] **Fix "augmented hint variant"** — no longer mentions the hint variant
 - [x] **Fix sample-size inconsistency** — now consistently 1{,}000
 - [x] **Fix "All four models"** — now correctly says four (HRM, TRM, SHREK-Large, SHREK-Small)
-- [ ] **Fix Sudoku hyperparameters in Methodology** — still says `learning rate $1 \times 10^{-4}$ (or $7 \times 10^{-5}$ for Sudoku), and global batch size 384`. Your verified Sudoku runs used **lr=1e-4, batch=768** (matching TRM); change accordingly
+- [ ] **Fix Sudoku hyperparameters in Methodology** — still says `learning rate $1 \times 10^{-4}$ (or $7 \times 10^{-5}$ for Sudoku), and global batch size 384`. Your verified Sudoku runs used **lr=1e-4, batch=768** (matching TRM); change accordingly - Max
 - [x] **Remove ARC-AGI mentions** — done
 - [x] **Capitalize subsection titles** — `\subsection{Limitations}` and `\subsection{Future Work}` now properly capitalized
 
