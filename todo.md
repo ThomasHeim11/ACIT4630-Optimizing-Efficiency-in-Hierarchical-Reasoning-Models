@@ -87,13 +87,13 @@ Updated based on the latest `main.tex` revision.
 - [x] "effecting" → "effective"
 
 ### Still to fix (NEW typos found in current revision)
-- [ ] **"Suskoko"** → "Sudoku" — Summary of Findings, item 3: *"+10\% over Original HRM in ablation on Suskoko dataset"*
-- [ ] **"fip rate"** → "flip-rate" — Conclusion: *"By combining the fip rate signals with a learned error estimator"*
-- [ ] **"Sudoku-Extremedataset"** missing space — Ablation Study: *"using the Sudoku-Extremedataset"*
-- [ ] **"stabilize effect"** → "stabilizing effect" — Ablation Study: *"control for its known stabilize effect"*
-- [ ] **"green ai"** → "Green AI" — Conclusion: *"This aligns with green ai \cite{schwartz2019greenai}"*
-- [ ] **"more computing"** → "more compute" — Conclusion: *"it might also require more computing"*
-- [ ] **"Sudoku-Extreme(32"** missing space — Methodology: *"global batch size 384 for Sudoku-Extreme(32 for smoke tests)"*
+- [X] **"Suskoko"** → "Sudoku" — Summary of Findings, item 3: *"+10\% over Original HRM in ablation on Suskoko dataset"*
+- [X] **"fip rate"** → "flip-rate" — Conclusion: *"By combining the fip rate signals with a learned error estimator"*
+- [X] **"Sudoku-Extremedataset"** missing space — Ablation Study: *"using the Sudoku-Extremedataset"*
+- [X] **"stabilize effect"** → "stabilizing effect" — Ablation Study: *"control for its known stabilize effect"*
+- [X] **"green ai"** → "Green AI" — Conclusion: *"This aligns with green ai \cite{schwartz2019greenai}"*
+- [X] **"more computing"** → "more compute" — Conclusion: *"it might also require more computing"*
+- [X] **"Sudoku-Extreme(32"** missing space — Methodology: *"global batch size 384 for Sudoku-Extreme(32 for smoke tests)"*
 
 ---
 
