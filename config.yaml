@@ -25,24 +25,35 @@ data_dir: "data"       # test data lands here  (matches teacher's required `data
 
 evaluations:
   # Peak (best-checkpoint) accuracy as reported in the paper Tables II and III.
-  # Steps were verified locally on the cluster: SHREK Large Sudoku step_26040 → 63.5%,
-  # SHREK Small Sudoku step_37758 → 63.1%; Maze peak ≈ step_46872 from training charts.
+  # SHREK Large Sudoku step_26040 → 63.5% verified; SHREK Small Sudoku step_37758
+  # → 63.1% verified. Maze peaks ≈ step_46872 (Tiny) / step_85932 (Large) from charts.
 
-  # ----- Sudoku-Extreme (SHREK only — HRM/TRM baselines cited from prior papers) -----
+  # ----- Sudoku-Extreme -----
   - name: "SHREK Large"
     task: "Sudoku-Extreme"
     model_code_dir: "source/SHREK-HRM"
-    checkpoint_subpath: "shrek-large/step_26040"
+    checkpoint_subpath: "sudoku-extreme/shrek-large/step_26040"
     expected_accuracy: 0.65
 
   - name: "SHREK Small"
     task: "Sudoku-Extreme"
     model_code_dir: "source/SHREK-HRM"
-    checkpoint_subpath: "shrek-tiny/step_37758"
+    checkpoint_subpath: "sudoku-extreme/shrek-tiny/step_37758"
     expected_accuracy: 0.63
 
-  # ----- Maze-Hard (SHREK only) -----
-  # SHREK Large peaks later than Tiny: ~step 70k-100k. Tiny peaks ~step 46872.
+  - name: "Original HRM"
+    task: "Sudoku-Extreme"
+    model_code_dir: "source/HRM(Original)/HRM-main"
+    checkpoint_subpath: "sudoku-extreme/original-hrm/step_52080"
+    expected_accuracy: 0.53
+
+  - name: "TRM Attention"
+    task: "Sudoku-Extreme"
+    model_code_dir: "source/TinyRecursiveModels"
+    checkpoint_subpath: "sudoku-extreme/trm-attention/step_52080"
+    expected_accuracy: 0.70
+
+  # ----- Maze-Hard -----
   - name: "SHREK Large"
     task: "Maze-Hard"
     model_code_dir: "source/SHREK-HRM"
@@ -54,3 +65,15 @@ evaluations:
     model_code_dir: "source/SHREK-HRM"
     checkpoint_subpath: "maze-hard/shrek-tiny/step_46872"
     expected_accuracy: 0.73
+
+  - name: "Original HRM"
+    task: "Maze-Hard"
+    model_code_dir: "source/HRM(Original)/HRM-main"
+    checkpoint_subpath: "maze-hard/original-hrm/step_156240"
+    expected_accuracy: 0.75
+
+  - name: "TRM Attention"
+    task: "Maze-Hard"
+    model_code_dir: "source/TinyRecursiveModels"
+    checkpoint_subpath: "maze-hard/trm-attention/step_156240"
+    expected_accuracy: 0.87
