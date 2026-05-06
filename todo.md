@@ -15,7 +15,7 @@ Updated based on the latest `main.tex` revision.
 - [x] **Fix "augmented hint variant"** — no longer mentions the hint variant
 - [x] **Fix sample-size inconsistency** — now consistently 1{,}000
 - [x] **Fix "All four models"** — now correctly says four (HRM, TRM, SHREK-Large, SHREK-Small)
-- [ ] **Fix Sudoku hyperparameters in Methodology** — still says `learning rate $1 \times 10^{-4}$ (or $7 \times 10^{-5}$ for Sudoku), and global batch size 384`. Your verified Sudoku runs used **lr=1e-4, batch=768** (matching TRM); change accordingly - Max
+- [X] **Fix Sudoku hyperparameters in Methodology** — still says `learning rate $1 \times 10^{-4}$ (or $7 \times 10^{-5}$ for Sudoku), and global batch size 384`. Your verified Sudoku runs used **lr=1e-4, batch=768** (matching TRM); change accordingly - Max
 - [x] **Remove ARC-AGI mentions** — done
 - [x] **Capitalize subsection titles** — `\subsection{Limitations}` and `\subsection{Future Work}` now properly capitalized
 
@@ -45,7 +45,7 @@ Updated based on the latest `main.tex` revision.
 
 ### Compress overlapping sections
 
-- [ ] **Cut Discussion section** — still has 5 paragraphs that overlap heavily with Conclusion (error injection is biggest contributor, SHREK-Small competitive, Sudoku halts earlier, Maze costs more). Cut to 2–3 paragraphs of fresh analysis.
+- [X] **Cut Discussion section** — still has 5 paragraphs that overlap heavily with Conclusion (error injection is biggest contributor, SHREK-Small competitive, Sudoku halts earlier, Maze costs more). Cut to 2–3 paragraphs of fresh analysis.
 - [ ] **Merge or compress** Section IV-C (Methodology) ↔ Section IV-D (Proposed Solution) — both still describe the architecture
 - [ ] **Compress Implementation Plan** — Section III still has 4 subsections (Research Gaps, Research Objective, Research Question, Problem Statement). Consider folding into Background + opening of Section IV per the IEEE-recommended structure
 
@@ -113,7 +113,7 @@ Updated based on the latest `main.tex` revision.
 - [x] **Section II-A "apples to apples"** — wording rephrased
 - [x] **Section III "Gap 2: Gap 2"** duplicated label — fixed
 - [ ] **Section IV-A "Approach"** — bullet list still mentions early plan terms (*"Internal Logical Floor"*, *"Inference-Time Stuck Alarm"*) but Section IV-D uses *"error injection"* and *"stagnation delta"* — unify terminology
-- [ ] **Section IV-A caveat paragraph** — *"We were not able to generate enough computational resources to train these models on our own"* contradicts your later statement that you DID train all models on the cluster. Remove this paragraph or rephrase
+- [X] **Section IV-A caveat paragraph** — *"We were not able to generate enough computational resources to train these models on our own"* contradicts your later statement that you DID train all models on the cluster. Remove this paragraph or rephrase
 
 ---
 
