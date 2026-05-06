@@ -2,34 +2,29 @@
 
 Complete pre-submission cleanup list. Covers `main.tex`, code, FLOPs, and submission package.
 
+Updated based on the latest `main.tex` revision.
+
 ---
 
 ## 🔴 1. main.tex — must-fix factual errors and placeholders
 
-- [X] **Fill in word count** in title (line 20): replace `Wordcount: [Insert Count]` with the actual count
-- [X] **Remove Norwegian TODO comment** in Introduction (line 48): `% Tror det kan være greit å prøve å svare på...`
-- [ ] **Fix wrong citations** in Materials section (line 236): `\cite{hoffmann2022training, cuskley2024limitations}` is wrong for HRM/TRM reference numbers — change to `\cite{wang2025hierarchicalreasoningmodel, jolicoeurmartineau2025morerecursivereasoningtiny}`
-- [X] **Fix "six key findings" miscount** (line 451) — list contains only 5 items, either add a 6th or change "six" → "five"
-- [X] **Fix "augmented hint variant"** (line 230) — your verified runs use **vanilla** Sudoku-Extreme-1k-aug-1000 (no hint), not the hint variant
-- [x] **Fix sample-size inconsistency** — line 394 says "100 test puzzles", line 305 says "1000 test samples"; pick one and use everywhere
-- [X] **Fix "All four models"** (line 230) — you trained 5: HRM, TRM-Att, TRM-MLP, SHREK-Large, SHREK-Tiny
-- [ ] **Fix Sudoku hyperparameters in Methodology** (line 230) — currently says `lr=7e-5, batch=384`, but your verified runs used `lr=1e-4, batch=768` (matching TRM)
-- [X] **Remove ARC-AGI mentions** in Methodology (line 232) — you only evaluate Sudoku + Maze; either drop ARC-AGI or move to Future Work consistently
-- [X] **Capitalize subsection titles** for consistency: `\subsection{limitations}` → `\subsection{Limitations}`, same for `\subsection{future work}` → `\subsection{Future Work}`
+- [x] **Fill in word count** in title — placeholder removed
+- [x] **Remove Norwegian TODO comment** in Introduction
+- [x] **Fix wrong citations** in Materials section — `[hoffmann2022training, cuskley2024limitations]` no longer appears for HRM/TRM
+- [x] **Fix "six key findings" miscount** — now says "five key findings" matching 5 items
+- [x] **Fix "augmented hint variant"** — no longer mentions the hint variant
+- [x] **Fix sample-size inconsistency** — now consistently 1{,}000
+- [x] **Fix "All four models"** — now correctly says four (HRM, TRM, SHREK-Large, SHREK-Small)
+- [ ] **Fix Sudoku hyperparameters in Methodology** — still says `learning rate $1 \times 10^{-4}$ (or $7 \times 10^{-5}$ for Sudoku), and global batch size 384`. Your verified Sudoku runs used **lr=1e-4, batch=768** (matching TRM); change accordingly
+- [x] **Remove ARC-AGI mentions** — done
+- [x] **Capitalize subsection titles** — `\subsection{Limitations}` and `\subsection{Future Work}` now properly capitalized
 
 ---
 
 ## 🔴 2. main.tex — naming consistency
 
-- [X] **Unify "SHREK Tiny" vs "SHREK Small"** — FLOPs script renamed Tiny → Small. Decide on one name, then update all of:
-  - Tables II, III, IV (results)
-  - Tables V, VI (FLOPs)
-  - Discussion paragraphs
-  - Conclusion paragraphs
-  - Abstract / contributions list
-- [X] **TRM MLP consistency** — appears in Table II (Sudoku, 84%) and FLOPs Sudoku table, but you decided to drop TRM MLP from FLOPs comparison. Either:
-  - Remove TRM MLP row from both Table II and FLOPs table, OR
-  - Keep TRM MLP in both with a note (e.g., "MLP variant shown for reference; not included in FLOPs comparison because it uses a different architecture family")
+- [x] **Unify "SHREK Tiny" vs "SHREK Small"** — consistently SHREK-Small everywhere
+- [x] **TRM MLP consistency** — removed from both Sudoku table and FLOPs table
 
 ---
 
@@ -37,28 +32,22 @@ Complete pre-submission cleanup list. Covers `main.tex`, code, FLOPs, and submis
 
 ### Direct deletions
 
-- [X] **Delete annotation block** lines 521–580 (everything after `\end{document}`) — leftover chat notes that shouldn't ship with the source
-- [ ] **Delete intro repeat** (line 73) — *"Motivated by this insight, we propose the SHREK-HRM..."* duplicates the same sentence in line 62
-- [ ] **Delete duplicated paragraph** lines 272–276 — the two sentences *"We removed the second inner forward pass that AugmentedHRM used... two variants..."* appear twice in Section IV-D
+- [x] **Delete annotation block** after `\end{document}`
+- [x] **Delete intro repeat** — line 73 duplicate of line 62 removed
+- [x] **Delete duplicated paragraph** — "We removed the second inner forward pass..." now appears only once
 
 ### Drop benchmark literature subsections
 
-None of these inform SHREK's design. Removing tightens lit review by ~1.5 PDF pages.
-
-- [X] **Delete subsection** *"Can We Trust AI Benchmarks?"* (Eriksson et al.) — line 118
-- [X] **Delete subsection** *"Assessing Small Language Models for Code Generation"* (Hasan et al.) — line 126
-- [X] **Delete subsection** *"Benchmarking is Broken"* (Cheng et al.) — line 134
-- [ ] **Optional**: fold one sentence into Introduction citing Eriksson — *"Concerns about benchmark trustworthiness [eriksson2025trustbenchmarks] further motivate honest, identical-hardware comparisons of compact reasoning models."*
+- [x] **Delete subsection** *"Can We Trust AI Benchmarks?"*
+- [x] **Delete subsection** *"Assessing Small Language Models for Code Generation"*
+- [x] **Delete subsection** *"Benchmarking is Broken"*
+- [x] **Optional**: fold one sentence into Introduction citing Eriksson — not done; OK to skip
 
 ### Compress overlapping sections
 
-- [ ] **Cut Discussion section** (Section VI) to ~2 short analytical paragraphs — currently 4 paragraphs that overlap heavily with Conclusion; both say:
-  - Error injection is the biggest contributor
-  - SHREK Tiny matches HRM with fewer parameters
-  - Sudoku halts earlier saves compute
-  - Maze requires more steps for higher accuracy
-- [ ] **Merge or compress** Section IV-C (Methodology) ↔ Section IV-D (Proposed Solution) — both describe the architecture (one code-focused, one math-focused). At minimum, ensure no sentences are repeated verbatim.
-- [ ] **Compress Implementation Plan** (Section III subsection) — currently lists 5 steps that are repeated in Methodology
+- [ ] **Cut Discussion section** — still has 5 paragraphs that overlap heavily with Conclusion (error injection is biggest contributor, SHREK-Small competitive, Sudoku halts earlier, Maze costs more). Cut to 2–3 paragraphs of fresh analysis.
+- [ ] **Merge or compress** Section IV-C (Methodology) ↔ Section IV-D (Proposed Solution) — both still describe the architecture
+- [ ] **Compress Implementation Plan** — Section III still has 4 subsections (Research Gaps, Research Objective, Research Question, Problem Statement). Consider folding into Background + opening of Section IV per the IEEE-recommended structure
 
 ---
 
@@ -77,36 +66,72 @@ None of these inform SHREK's design. Removing tightens lit review by ~1.5 PDF pa
   - `run_test.sh` (cluster-only SLURM wrapper)
   - `cluster.md` (your private notes about cluster login)
   - `SHREKV4.md` (V4 work plan, not relevant to V1 paper)
-  - These can be removed from `Project-Attachment-GroupXX.zip` even if kept in repo
+  - These can be excluded from `Project-Attachment-GroupXX.zip` even if kept in repo
 
 ---
 
-## 📊 6. FLOPs tables — update with new measurements
+## ✏️ 5. Spelling / grammar pass
 
-After the latest cluster FLOPs run (1111727 or successor) finishes:
+### Already fixed
+- [x] "hierarchial" → "hierarchical"
+- [x] "ocisilation" → "oscillation"
+- [x] "reasonin" → "reasoning"
+- [x] "compational" → "computational"
+- [x] "consistenyl" → "consistently"
+- [x] "despiste" → "despite"
+- [x] "primarliy" → "primarily"
+- [x] "Shrek LARGE" → "SHREK-Large"
+- [x] "MAZE" → "Maze-Hard"
+- [x] "sudoku" → "Sudoku-Extreme"
+- [x] "form" → "from"
+- [x] "effecting" → "effective"
 
-- [ ] Pull updated JSONs to local: `scp -P 60441 -r thheim@dnat.simula.no:~/HMR/flops/results flops/`
-- [ ] Update **Table V** (Sudoku FLOPs) using `flops/results/*_sudoku.json`
-- [ ] Update **Table VI** (Maze FLOPs) using `flops/results/*_maze.json`
-- [ ] Regenerate plots: `python3 flops/flops.py plot --results-dir flops/results`
-- [ ] Verify both PNGs show only 4 models per task (no SHREK Tiny phantom, no TRM MLP)
-- [ ] Replace `sudoku_accuracy_vs_flops.png` and `maze_accuracy_vs_flops.png` references in `main.tex` if any path issues
+### Still to fix (NEW typos found in current revision)
+- [ ] **"Suskoko"** → "Sudoku" — Summary of Findings, item 3: *"+10\% over Original HRM in ablation on Suskoko dataset"*
+- [ ] **"fip rate"** → "flip-rate" — Conclusion: *"By combining the fip rate signals with a learned error estimator"*
+- [ ] **"Sudoku-Extremedataset"** missing space — Ablation Study: *"using the Sudoku-Extremedataset"*
+- [ ] **"stabilize effect"** → "stabilizing effect" — Ablation Study: *"control for its known stabilize effect"*
+- [ ] **"green ai"** → "Green AI" — Conclusion: *"This aligns with green ai \cite{schwartz2019greenai}"*
+- [ ] **"more computing"** → "more compute" — Conclusion: *"it might also require more computing"*
+- [ ] **"Sudoku-Extreme(32"** missing space — Methodology: *"global batch size 384 for Sudoku-Extreme(32 for smoke tests)"*
+
+---
+
+## 📊 6. FLOPs tables — update with latest measurements
+
+- [x] FLOPs JSONs are current (latest cluster run completed)
+- [x] Plots regenerated locally with correct 4-models-per-task structure (no SHREK Tiny phantom, no TRM MLP)
+- [ ] Verify Table V (Sudoku FLOPs) numbers in main.tex match `flops/results/*_sudoku.json`
+- [ ] Verify Table VI (Maze FLOPs) numbers in main.tex match `flops/results/*_maze.json`
+- [ ] Confirm `flops/sudoku_accuracy_vs_flops.png` and `flops/maze_accuracy_vs_flops.png` are the regenerated versions in the report
 
 ---
 
 ## ⚠️ 7. main.tex — content questions to verify
 
-- [ ] **Ablation Table IV "HRM + EMA" 57%** — chart we verified shows ~67% peak. Either:
-  - Re-verify the source of the 57% number (separate run? different metric?)
-  - OR add a footnote acknowledging the gap
-  - OR replace with the verified ~67% from chart
-- [X] **Section II-A end** says HRM compared "exactly comparing apples to apples" issue — review wording, currently a bit informal
-- [X] **Section III research gap "Gap 2: Gap 2"** (line 167) — duplicated label, fix
-- [ ] **Section IV-A "Approach"** — bullet list mentions "Logical Floor" and "Inference-Time Stuck Alarm" (early plan terms) but the actual implementation in Section IV-D uses "error injection" and "stagnation delta" — terminology drift, unify
+- [ ] **Ablation Table IV "HRM + EMA" 57%** — chart we verified shows ~67% peak. Either re-verify the source, add a footnote, or replace with ~67%
+- [x] **Section II-A "apples to apples"** — wording rephrased
+- [x] **Section III "Gap 2: Gap 2"** duplicated label — fixed
+- [ ] **Section IV-A "Approach"** — bullet list still mentions early plan terms (*"Internal Logical Floor"*, *"Inference-Time Stuck Alarm"*) but Section IV-D uses *"error injection"* and *"stagnation delta"* — unify terminology
+- [ ] **Section IV-A caveat paragraph** — *"We were not able to generate enough computational resources to train these models on our own"* contradicts your later statement that you DID train all models on the cluster. Remove this paragraph or rephrase
 
 ---
 
-## 📦 8. Submission package — final assembly
+## 🟡 8. Structural restructuring (optional but recommended)
+
+The teacher's spec prescribes: **Introduction → Background → Proposed Solution → Experiments → Results → Discussion → Conclusion**.
+
+Current Section III (*Research Gaps, Research Problem, Research Question and Problem Statement*) doesn't fit. Suggested restructure:
+
+- [ ] **Move "Research Gaps"** to end of Section II (Background) as final subsection
+- [ ] **Compress "Research Objective + Research Question"** into 2 sentences at the end of the Introduction
+- [ ] **Compress "Problem Statement"** into 1 short paragraph at the start of new Section III (Proposed Solution)
+- [ ] **Delete Section III header**, renumber subsequent sections
+- [ ] Section IV (Method and Materials) → split into separate **Section III: Proposed Solution** and **Section IV: Experiments** to match teacher's structure
+
+---
+
+## 📦 9. Submission package — final assembly
 
 - [ ] Add `huggingface_hub` to `requirements.txt`
 - [ ] Add `pyyaml` to `requirements.txt`
@@ -115,7 +140,7 @@ After the latest cluster FLOPs run (1111727 or successor) finishes:
   - Setup instructions (`pip install -r requirements.txt`)
   - Hardware requirement (NVIDIA GPU + CUDA 12.6)
   - How to run `python test.py`
-  - Expected output table matching Tables II + III
+  - Expected output table matching Tables I + II
   - Note about HuggingFace download on first run (~16GB)
 - [ ] Final test of `test.py` on cluster — confirm all 8 rows produce non-`n/a` accuracy values
 - [ ] Verify `source/` directory contains code (per teacher's required structure)
@@ -130,46 +155,31 @@ After the latest cluster FLOPs run (1111727 or successor) finishes:
   - `config.yaml`
   - LaTeX source files (`main.tex`, `bib.bib`, any included figures)
 - [ ] Submit `Project-Report-GroupXX.pdf` and `Project-Attachment-GroupXX.zip`
+- [ ] **Update Individual contributions appendix** — currently all 100% which is unusual; teacher expects percentages relative to the most contributing person being 100%. Some members may end up at 80–90%
 
 ---
 
-## 🟢 9. Things that are GOOD — DO NOT change
+## 🟢 10. Things that are GOOD — DO NOT change
 
-Leave these alone, they're working well:
-
-- Introduction's logical flow: LLM limits → Green AI → HRM → TRM → SHREK
+- Introduction's logical flow (LLM limits → Green AI → HRM → TRM → SHREK)
 - Ablation Table IV structure (component breakdown is clear)
 - FLOPs analysis (Tables V/VI + accuracy-vs-FLOPs figures) — strongest paper contribution
-- Honest limitations section (acknowledges Maze costs more, no hyperparameter search, etc.)
-- Future Work section (concrete directions: ARC-AGI, halting improvements, energy measurements)
+- Honest limitations section
+- Future Work section (concrete directions)
 - Math notation (flip rate equation, error injection formula, total loss)
-- Acknowledgment of dropped Augmented HRM section title
 
 ---
 
-## ⏱️ Estimated cleanup impact
+## 🎯 Remaining priority order
 
-| Action | Source lines saved | PDF pages saved |
-|---|---|---|
-| Delete trailing annotation block | ~60 | 0 (source-only) |
-| Drop 3 benchmark subsections | ~25 | ~1.5 |
-| Cut Discussion redundancy | ~8 | ~0.3 |
-| Delete intro repeat + duplicated paragraphs | ~5 | ~0.2 |
-| Spelling + factual fixes | — | reviewer-proof |
-| **Total** | **~100 source** | **~2 PDF pages** |
-
----
-
-## 🎯 Recommended priority order
-
-1. **Must-fix factual errors** (Section 1) — placeholders, wrong citations, count mismatches
-2. **Naming consistency** (Section 2) — SHREK Small vs Tiny, TRM MLP decision
-3. **Delete trailing annotation block** (Section 3 first item) — cosmetic but easy
-4. **Drop 3 benchmark subsections** (Section 3) — biggest readability win
-5. **Direct redundancies** (Section 3) — intro repeat, duplicated paragraphs
-6. **Cut Discussion** to remove overlap with Conclusion
-7. **Spelling pass** (Section 5)
-8. **Update FLOPs tables** with latest measurements (Section 6)
-9. **Repo cleanup** (Section 4) — empty folders, stale JSONs
-10. **README + requirements.txt + final test.py verification** (Section 8)
-11. **Build ZIP and submit** (Section 8)
+1. **Sudoku hyperparameters fix** (Section 1) — only must-fix factual error left
+2. **New typos** (Section 5: Suskoko, fip rate, Sudoku-Extremedataset, stabilize, green ai, more computing)
+3. **Approach terminology drift** (Section 7) — Logical Floor / Stuck Alarm unify
+4. **Caveat paragraph contradiction** (Section 7) — remove or rephrase
+5. **Cut Discussion redundancy** (Section 3)
+6. **Verify Ablation Table IV 57%** (Section 7)
+7. **Optional**: Section III restructure (Section 8)
+8. **FLOPs table number verification** (Section 6)
+9. **Repo cleanup** (Section 4)
+10. **README + requirements.txt + test.py verification** (Section 9)
+11. **Build ZIP and submit** (Section 9)
