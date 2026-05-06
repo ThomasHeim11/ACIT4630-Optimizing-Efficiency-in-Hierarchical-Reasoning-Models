@@ -44,12 +44,6 @@ DISABLE_COMPILE=1 python3 $FLOPS measure \
     --model-dir "$TRM_DIR" \
     --name "TRM Attention" --task sudoku --num-samples 1000 --results-dir $RESULTS
 
-echo "=== TRM MLP (Sudoku) ==="
-DISABLE_COMPILE=1 python3 $FLOPS measure \
-    --checkpoint "$CKPT/sudoku-extreme/trm-mlp" \
-    --model-dir "$TRM_DIR" \
-    --name "TRM MLP" --task sudoku --num-samples 1000 --results-dir $RESULTS
-
 # ── Maze ──
 
 echo "=== Original HRM (Maze) ==="
