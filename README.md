@@ -14,7 +14,7 @@ This repository benchmarks SHREK-HRM against HRM and Tiny Recursive Models on Su
 | TRM Attention | ~7M | 2 layers, hidden=512 | Simplified recursive reasoning |
 | TRM MLP | ~5M | 2 layers, hidden=512 | MLP-only variant (no attention) |
 | **SHREK Large** | **~27M** | **4H + 4L, hidden=512** | **+ Error estimator, error injection, EMA** |
-| **SHREK Tiny** | **~14M** | **2H + 2L, hidden=512** | **+ Error estimator, error injection, EMA** |
+| **SHREK Small** | **~14M** | **2H + 2L, hidden=512** | **+ Error estimator, error injection, EMA** |
 
 All HRM-family models share: `H_cycles=2, L_cycles=2, halt_max_steps=16, expansion=4`.
 TRM uses: `H_cycles=3, L_cycles=6 (Sudoku) / L_cycles=4 (Maze)`.
@@ -74,12 +74,12 @@ All models trained on 1x NVIDIA GH200 GPU (102GB VRAM).
 | TRM MLP | ~5M | ~84% |
 | TRM Attention | ~7M | ~70% |
 | **SHREK Large** | **~27M** | **~65%** |
-| **SHREK Tiny** | **~14M** | **~63%** |
+| **SHREK Small** | **~14M** | **~63%** |
 | Original HRM | ~27M | 53% |
 
 **Key findings:**
 - SHREK Large (~65%) outperforms Original HRM (53%) by 12 percentage points
-- SHREK Tiny (~63%) surpasses 27M-parameter Original HRM with only 14M parameters
+- SHREK Small (~63%) surpasses 27M-parameter Original HRM with only 14M parameters
 
 ### Maze-Hard (1000 training examples)
 
@@ -88,11 +88,11 @@ All models trained on 1x NVIDIA GH200 GPU (102GB VRAM).
 | TRM Attention | ~7M | ~87% |
 | **SHREK Large** | **~27M** | **~83%** |
 | Original HRM | ~27M | ~75% |
-| **SHREK Tiny** | **~14M** | **~73%** |
+| **SHREK Small** | **~14M** | **~73%** |
 
 **Key findings:**
 - SHREK Large (~83%) outperforms Original HRM (~75%) by 8 percentage points
-- SHREK Tiny (~73%) matches Original HRM with roughly half the parameters
+- SHREK Small (~73%) matches Original HRM with roughly half the parameters
 
 ---
 
@@ -228,7 +228,7 @@ Inference FLOPs measured on GPU using PyTorch's `FlopCounterMode` over 1000 test
 
 | Model | Params | Steps | GF/step | GF/puzzle | Accuracy |
 |---|---|---|---|---|---|
-| SHREK Tiny | ~14M | 10.7 | 6.71 | 71.6 | ~63% |
+| SHREK Small | ~14M | 10.7 | 6.71 | 71.6 | ~63% |
 | SHREK Large | ~27M | 8.6 | 13.41 | 115.6 | ~65% |
 | Original HRM | ~27M | 10.6 | 13.41 | 141.6 | 53% |
 | TRM MLP | ~5M | 5.7 | 25.63 | 146.4 | ~84% |
@@ -239,7 +239,7 @@ Inference FLOPs measured on GPU using PyTorch's `FlopCounterMode` over 1000 test
 | Model | Params | Steps | GF/step | GF/puzzle | Accuracy |
 |---|---|---|---|---|---|
 | TRM Attention | ~7M | 1.2 | 238.85 | 275.4 | ~87% |
-| SHREK Tiny | ~14M | 5.0 | 73.70 | 369.2 | ~73% |
+| SHREK Small | ~14M | 5.0 | 73.70 | 369.2 | ~73% |
 | Original HRM | ~27M | 6.4 | 147.39 | 941.1 | ~75% |
 | SHREK Large | ~27M | 10.1 | 147.39 | 1481.0 | ~83% |
 

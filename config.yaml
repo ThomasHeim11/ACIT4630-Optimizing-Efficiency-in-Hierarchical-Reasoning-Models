@@ -26,7 +26,7 @@ data_dir: "data"       # test data lands here  (matches teacher's required `data
 evaluations:
   # Peak (best-checkpoint) accuracy as reported in the paper Tables II and III.
   # Steps were verified locally on the cluster: SHREK Large Sudoku step_26040 → 63.5%,
-  # SHREK Tiny Sudoku step_37758 → 63.1%; Maze peak ≈ step_46872 from training charts.
+  # SHREK Small Sudoku step_37758 → 63.1%; Maze peak ≈ step_46872 from training charts.
 
   # ----- Sudoku-Extreme (SHREK only — HRM/TRM baselines cited from prior papers) -----
   - name: "SHREK Large"
@@ -35,7 +35,7 @@ evaluations:
     checkpoint_subpath: "shrek-large/step_26040"
     expected_accuracy: 0.65
 
-  - name: "SHREK Tiny"
+  - name: "SHREK Small"
     task: "Sudoku-Extreme"
     model_code_dir: "source/SHREK-HRM"
     checkpoint_subpath: "shrek-tiny/step_37758"
@@ -49,7 +49,7 @@ evaluations:
     checkpoint_subpath: "maze-hard/shrek-large/step_85932"
     expected_accuracy: 0.83
 
-  - name: "SHREK Tiny"
+  - name: "SHREK Small"
     task: "Maze-Hard"
     model_code_dir: "source/SHREK-HRM"
     checkpoint_subpath: "maze-hard/shrek-tiny/step_46872"

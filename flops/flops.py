@@ -261,7 +261,7 @@ def run_measure(args):
 MODEL_COLORS = {
     "Original HRM":  "#e74c3c",
     "SHREK Large":   "#3498db",
-    "SHREK Tiny":    "#1abc9c",
+    "SHREK Small":    "#1abc9c",
     "TRM Attention":  "#9b59b6",
     "TRM MLP":        "#2ecc71",
 }
@@ -270,12 +270,12 @@ MODEL_COLORS = {
 MODEL_ACCURACY = {
     ("Original HRM", "sudoku"):  53.0,
     ("SHREK Large", "sudoku"):   65.0,
-    ("SHREK Tiny", "sudoku"):    63.0,
+    ("SHREK Small", "sudoku"):    63.0,
     ("TRM Attention", "sudoku"): 70.0,
     ("TRM MLP", "sudoku"):       84.0,
     ("Original HRM", "maze"):    75.0,
     ("SHREK Large", "maze"):     83.0,
-    ("SHREK Tiny", "maze"):      73.0,
+    ("SHREK Small", "maze"):      73.0,
     ("TRM Attention", "maze"):   87.0,
 }
 
