@@ -32,11 +32,11 @@ DISABLE_COMPILE=1 python3 $FLOPS measure \
     --model-dir "$SHREK_DIR" \
     --name "SHREK Large" --task sudoku --num-samples 1000 --results-dir $RESULTS
 
-echo "=== SHREK Tiny (Sudoku) ==="
+echo "=== SHREK Small (Sudoku) ==="
 DISABLE_COMPILE=1 python3 $FLOPS measure \
     --checkpoint "$CKPT/sudoku-extreme/shrek-tiny" \
     --model-dir "$SHREK_DIR" \
-    --name "SHREK Tiny" --task sudoku --num-samples 1000 --results-dir $RESULTS
+    --name "SHREK Small" --task sudoku --num-samples 1000 --results-dir $RESULTS
 
 echo "=== TRM Attention (Sudoku) ==="
 DISABLE_COMPILE=1 python3 $FLOPS measure \
@@ -58,11 +58,11 @@ DISABLE_COMPILE=1 python3 $FLOPS measure \
     --model-dir "$SHREK_DIR" \
     --name "SHREK Large" --task maze --num-samples 1000 --results-dir $RESULTS
 
-echo "=== SHREK Tiny (Maze) ==="
+echo "=== SHREK Small (Maze) ==="
 DISABLE_COMPILE=1 python3 $FLOPS measure \
     --checkpoint "$CKPT/maze-hard/shrek-tiny" \
     --model-dir "$SHREK_DIR" \
-    --name "SHREK Tiny" --task maze --num-samples 1000 --results-dir $RESULTS
+    --name "SHREK Small" --task maze --num-samples 1000 --results-dir $RESULTS
 
 echo "=== TRM Attention (Maze) ==="
 DISABLE_COMPILE=1 python3 $FLOPS measure \
