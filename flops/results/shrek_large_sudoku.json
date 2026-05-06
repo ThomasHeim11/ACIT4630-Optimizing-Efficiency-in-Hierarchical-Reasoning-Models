@@ -3,12 +3,12 @@
   "task": "sudoku",
   "checkpoint": "/home/thheim/HMR/checkpoints/sudoku-extreme/shrek-large/step_52080",
   "parameters": 27276803,
-  "num_puzzles": 100,
-  "avg_steps": 8.23,
+  "num_puzzles": 1000,
+  "avg_steps": 8.616,
   "flops_per_step": 13414310912.0,
   "gflops_per_step": 13.414310912,
-  "avg_flops_per_puzzle": 110399778805.76001,
-  "avg_gflops_per_puzzle": 110.39977880576001,
+  "avg_flops_per_puzzle": 115577702817.79199,
+  "avg_gflops_per_puzzle": 115.57770281779199,
   "total_flops_16_steps": 214628974592.0,
   "total_gflops_16_steps": 214.628974592
 }

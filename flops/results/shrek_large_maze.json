@@ -3,12 +3,12 @@
   "task": "maze",
   "checkpoint": "/home/thheim/HMR/checkpoints/maze-hard/shrek-large/step_156240",
   "parameters": 27271685,
-  "num_puzzles": 100,
-  "avg_steps": 10.31,
+  "num_puzzles": 1000,
+  "avg_steps": 10.048,
   "flops_per_step": 147389188100.0,
   "gflops_per_step": 147.3891881,
-  "avg_flops_per_puzzle": 1519582529311.0,
-  "avg_gflops_per_puzzle": 1519.582529311,
+  "avg_flops_per_puzzle": 1480966562028.8,
+  "avg_gflops_per_puzzle": 1480.9665620288001,
   "total_flops_16_steps": 2358227009600.0,
   "total_gflops_16_steps": 2358.2270096
 }

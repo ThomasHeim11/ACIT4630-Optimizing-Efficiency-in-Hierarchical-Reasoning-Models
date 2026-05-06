@@ -3,12 +3,12 @@
   "task": "maze",
   "checkpoint": "/home/thheim/HMR/checkpoints/maze-hard/original-hrm/step_156240",
   "parameters": 27270146,
-  "num_puzzles": 100,
-  "avg_steps": 6.67,
+  "num_puzzles": 1000,
+  "avg_steps": 6.385,
   "flops_per_step": 147389186048.0,
   "gflops_per_step": 147.389186048,
-  "avg_flops_per_puzzle": 983085870940.16,
-  "avg_gflops_per_puzzle": 983.08587094016,
+  "avg_flops_per_puzzle": 941079952916.48,
+  "avg_gflops_per_puzzle": 941.07995291648,
   "total_flops_16_steps": 2358226976768.0,
   "total_gflops_16_steps": 2358.226976768
 }

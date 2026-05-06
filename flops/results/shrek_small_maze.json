@@ -1,14 +1,14 @@
 {
-  "name": "SHREK Tiny",
+  "name": "SHREK Small",
   "task": "maze",
   "checkpoint": "/home/thheim/HMR/checkpoints/maze-hard/shrek-tiny/step_156240",
   "parameters": 13640197,
-  "num_puzzles": 100,
-  "avg_steps": 5.56,
+  "num_puzzles": 1000,
+  "avg_steps": 5.009,
   "flops_per_step": 73697363972.0,
   "gflops_per_step": 73.697363972,
-  "avg_flops_per_puzzle": 409757343684.31995,
-  "avg_gflops_per_puzzle": 409.75734368431995,
+  "avg_flops_per_puzzle": 369150096135.74805,
+  "avg_gflops_per_puzzle": 369.1500961357481,
   "total_flops_16_steps": 1179157823552.0,
   "total_gflops_16_steps": 1179.157823552
 }

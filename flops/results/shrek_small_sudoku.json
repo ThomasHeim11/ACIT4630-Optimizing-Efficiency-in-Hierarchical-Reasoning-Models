@@ -1,14 +1,14 @@
 {
-  "name": "SHREK Tiny",
+  "name": "SHREK Small",
   "task": "sudoku",
   "checkpoint": "/home/thheim/HMR/checkpoints/sudoku-extreme/shrek-tiny/step_52080",
   "parameters": 13645315,
-  "num_puzzles": 100,
-  "avg_steps": 9.95,
+  "num_puzzles": 1000,
+  "avg_steps": 10.676,
   "flops_per_step": 6707618816.0,
   "gflops_per_step": 6.707618816,
-  "avg_flops_per_puzzle": 66740807219.2,
-  "avg_gflops_per_puzzle": 66.7408072192,
+  "avg_flops_per_puzzle": 71610538479.616,
+  "avg_gflops_per_puzzle": 71.610538479616,
   "total_flops_16_steps": 107321901056.0,
   "total_gflops_16_steps": 107.321901056
 }

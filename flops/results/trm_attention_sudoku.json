@@ -3,12 +3,12 @@
   "task": "sudoku",
   "checkpoint": "/home/thheim/HMR/checkpoints/sudoku-extreme/trm-attention/step_52080",
   "parameters": 6828034,
-  "num_puzzles": 100,
-  "avg_steps": 5.9,
+  "num_puzzles": 1000,
+  "avg_steps": 7.626,
   "flops_per_step": 28577760256.0,
   "gflops_per_step": 28.577760256,
-  "avg_flops_per_puzzle": 168608785510.40002,
-  "avg_gflops_per_puzzle": 168.60878551040003,
+  "avg_flops_per_puzzle": 217933999712.256,
+  "avg_gflops_per_puzzle": 217.93399971225602,
   "total_flops_16_steps": 457244164096.0,
   "total_gflops_16_steps": 457.244164096
 }
