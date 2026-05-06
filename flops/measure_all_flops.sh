@@ -12,9 +12,9 @@ module load cuda12.6/toolkit/12.6.3
 FLOPS=~/HMR/flops/flops.py
 RESULTS=~/HMR/flops/results
 CKPT=~/HMR/checkpoints
-HRM_DIR=~/HMR/models/HRM\(Original\)/HRM-main
-SHREK_DIR=~/HMR/models/SHREK-HRM
-TRM_DIR=~/HMR/models/TinyRecursiveModels
+HRM_DIR=~/HMR/source/HRM\(Original\)/HRM-main
+SHREK_DIR=~/HMR/source/SHREK-HRM
+TRM_DIR=~/HMR/source/TinyRecursiveModels
 
 mkdir -p $RESULTS
 

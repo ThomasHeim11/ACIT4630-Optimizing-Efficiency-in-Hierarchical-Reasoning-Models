@@ -14,5 +14,5 @@ source /etc/profile.d/modules.sh
 source ~/.bash_profile
 module load cuda12.6/toolkit/12.6.3
 
-cd ~/HMR/models/SHREK-HRM
+cd ~/HMR/source/SHREK-HRM
 python3 evaluate.py checkpoint=checkpoints/SHREK_Ablation_Sudoku/SHREK_Tiny_Vanilla_Sudoku/step_37758

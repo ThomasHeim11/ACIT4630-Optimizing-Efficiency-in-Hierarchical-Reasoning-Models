@@ -1,15 +1,15 @@
 #!/bin/bash -l
-#SBATCH --job-name=ablation_no_both
+#SBATCH --job-name=ablation_no_err
 #SBATCH --partition=gh200q
 #SBATCH --gres=gpu:1
-#SBATCH --output=/home/thheim/HMR/logs/ablation_no_both_%j.log
-#SBATCH --error=/home/thheim/HMR/logs/ablation_no_both_%j.err
+#SBATCH --output=/home/thheim/HMR/logs/ablation_no_err_%j.log
+#SBATCH --error=/home/thheim/HMR/logs/ablation_no_err_%j.err
 
 source /etc/profile.d/modules.sh
 source ~/.bash_profile
 module load cuda12.6/toolkit/12.6.3
 
-cd ~/HMR/models/SHREK-HRM
+cd ~/HMR/source/SHREK-HRM
 
 OMP_NUM_THREADS=8 python3 pretrain.py \
     arch=shrek_large \
@@ -22,7 +22,7 @@ OMP_NUM_THREADS=8 python3 pretrain.py \
     weight_decay=1.0 \
     puzzle_emb_weight_decay=1.0 \
     arch.enable_error_injection=False \
-    arch.enable_stagnation_delta=False \
+    arch.enable_stagnation_delta=True \
     +ema=True \
-    +run_name=Ablation_No_Both \
+    +run_name=Ablation_No_Error_Injection \
     +project_name=SHREK_Ablation_Sudoku

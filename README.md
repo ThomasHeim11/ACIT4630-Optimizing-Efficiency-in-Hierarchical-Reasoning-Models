@@ -142,17 +142,17 @@ All training scripts are in each model's `script/train/` directory and can be su
 module load slurm
 
 # Sudoku-Extreme
-sbatch models/HRM\(Original\)/HRM-main/script/train/train_hrm_sudoku_1gpu.sh
-sbatch models/SHREK-HRM/script/train/train_shrek_large_sudoku.sh
-sbatch models/SHREK-HRM/script/train/train_shrek_tiny_sudoku.sh
-sbatch models/TinyRecursiveModels/script/train/train_trm_mlp_sudoku.sh
-sbatch models/TinyRecursiveModels/script/train/train_trm_att_sudoku.sh
+sbatch source/HRM\(Original\)/HRM-main/script/train/train_hrm_sudoku_1gpu.sh
+sbatch source/SHREK-HRM/script/train/train_shrek_large_sudoku.sh
+sbatch source/SHREK-HRM/script/train/train_shrek_tiny_sudoku.sh
+sbatch source/TinyRecursiveModels/script/train/train_trm_mlp_sudoku.sh
+sbatch source/TinyRecursiveModels/script/train/train_trm_att_sudoku.sh
 
 # Maze-Hard
-sbatch models/HRM\(Original\)/HRM-main/script/train/train_hrm_maze_1gpu.sh
-sbatch models/SHREK-HRM/script/train/train_shrek_large_maze.sh
-sbatch models/SHREK-HRM/script/train/train_shrek_tiny_maze.sh
-sbatch models/TinyRecursiveModels/script/train/train_trm_att_maze.sh
+sbatch source/HRM\(Original\)/HRM-main/script/train/train_hrm_maze_1gpu.sh
+sbatch source/SHREK-HRM/script/train/train_shrek_large_maze.sh
+sbatch source/SHREK-HRM/script/train/train_shrek_tiny_maze.sh
+sbatch source/TinyRecursiveModels/script/train/train_trm_att_maze.sh
 ```
 
 **Hyperparameter summary:**
@@ -174,7 +174,7 @@ Original HRM uses the paper's 1-GPU recipe. All others use the 8-GPU recipe sinc
 **Ensemble evaluation** (10 checkpoints + 9 token permutations):
 
 ```bash
-cd models/hrm-mechanistic-analysis-main  # or SHREK-HRM
+cd source/hrm-mechanistic-analysis-main  # or SHREK-HRM
 DISABLE_COMPILE=1 python3 batch_inference.py \
     --checkpoints "step1,step2,...,step10" \
     --permutes 9 \

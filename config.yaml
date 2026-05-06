@@ -31,13 +31,13 @@ evaluations:
   # ----- Sudoku-Extreme (SHREK only — HRM/TRM baselines cited from prior papers) -----
   - name: "SHREK Large"
     task: "Sudoku-Extreme"
-    model_code_dir: "models/SHREK-HRM"
+    model_code_dir: "source/SHREK-HRM"
     checkpoint_subpath: "shrek-large/step_26040"
     expected_accuracy: 0.65
 
   - name: "SHREK Tiny"
     task: "Sudoku-Extreme"
-    model_code_dir: "models/SHREK-HRM"
+    model_code_dir: "source/SHREK-HRM"
     checkpoint_subpath: "shrek-tiny/step_37758"
     expected_accuracy: 0.63
 
@@ -45,12 +45,12 @@ evaluations:
   # SHREK Large peaks later than Tiny: ~step 70k-100k. Tiny peaks ~step 46872.
   - name: "SHREK Large"
     task: "Maze-Hard"
-    model_code_dir: "models/SHREK-HRM"
+    model_code_dir: "source/SHREK-HRM"
     checkpoint_subpath: "maze-hard/shrek-large/step_85932"
     expected_accuracy: 0.83
 
   - name: "SHREK Tiny"
     task: "Maze-Hard"
-    model_code_dir: "models/SHREK-HRM"
+    model_code_dir: "source/SHREK-HRM"
     checkpoint_subpath: "maze-hard/shrek-tiny/step_46872"
     expected_accuracy: 0.73

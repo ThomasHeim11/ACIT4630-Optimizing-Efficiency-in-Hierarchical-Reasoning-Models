@@ -9,7 +9,7 @@ source /etc/profile.d/modules.sh
 source ~/.bash_profile
 module load cuda12.6/toolkit/12.6.3
 
-cd ~/HMR/models/HRM\(Original\)/HRM-main
+cd ~/HMR/source/HRM\(Original\)/HRM-main
 
 OMP_NUM_THREADS=8 python3 pretrain.py \
     data_path=../../../dataset/data/sudoku-extreme-1k-aug-1000 \

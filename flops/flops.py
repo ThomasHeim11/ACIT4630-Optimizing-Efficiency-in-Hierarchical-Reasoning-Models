@@ -8,7 +8,7 @@ Two modes:
 Measure (run on cluster):
   python3 ~/HMR/flops/flops.py measure \
       --checkpoint ~/HMR/checkpoints/sudoku-extreme/shrek-large \
-      --model-dir ~/HMR/models/SHREK-HRM \
+      --model-dir ~/HMR/source/SHREK-HRM \
       --name "SHREK Large" --task sudoku
 
 Plot (no GPU needed):
