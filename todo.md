@@ -6,22 +6,22 @@ Complete pre-submission cleanup list. Covers `main.tex`, code, FLOPs, and submis
 
 ## 🔴 1. main.tex — must-fix factual errors and placeholders
 
-- [ ] **Fill in word count** in title (line 20): replace `Wordcount: [Insert Count]` with the actual count
-- [ ] **Remove Norwegian TODO comment** in Introduction (line 48): `% Tror det kan være greit å prøve å svare på...`
+- [X] **Fill in word count** in title (line 20): replace `Wordcount: [Insert Count]` with the actual count
+- [X] **Remove Norwegian TODO comment** in Introduction (line 48): `% Tror det kan være greit å prøve å svare på...`
 - [ ] **Fix wrong citations** in Materials section (line 236): `\cite{hoffmann2022training, cuskley2024limitations}` is wrong for HRM/TRM reference numbers — change to `\cite{wang2025hierarchicalreasoningmodel, jolicoeurmartineau2025morerecursivereasoningtiny}`
-- [ ] **Fix "six key findings" miscount** (line 451) — list contains only 5 items, either add a 6th or change "six" → "five"
-- [ ] **Fix "augmented hint variant"** (line 230) — your verified runs use **vanilla** Sudoku-Extreme-1k-aug-1000 (no hint), not the hint variant
+- [X] **Fix "six key findings" miscount** (line 451) — list contains only 5 items, either add a 6th or change "six" → "five"
+- [X] **Fix "augmented hint variant"** (line 230) — your verified runs use **vanilla** Sudoku-Extreme-1k-aug-1000 (no hint), not the hint variant
 - [ ] **Fix sample-size inconsistency** — line 394 says "100 test puzzles", line 305 says "1000 test samples"; pick one and use everywhere
-- [ ] **Fix "All four models"** (line 230) — you trained 5: HRM, TRM-Att, TRM-MLP, SHREK-Large, SHREK-Tiny
+- [X] **Fix "All four models"** (line 230) — you trained 5: HRM, TRM-Att, TRM-MLP, SHREK-Large, SHREK-Tiny
 - [ ] **Fix Sudoku hyperparameters in Methodology** (line 230) — currently says `lr=7e-5, batch=384`, but your verified runs used `lr=1e-4, batch=768` (matching TRM)
-- [ ] **Remove ARC-AGI mentions** in Methodology (line 232) — you only evaluate Sudoku + Maze; either drop ARC-AGI or move to Future Work consistently
-- [ ] **Capitalize subsection titles** for consistency: `\subsection{limitations}` → `\subsection{Limitations}`, same for `\subsection{future work}` → `\subsection{Future Work}`
+- [X] **Remove ARC-AGI mentions** in Methodology (line 232) — you only evaluate Sudoku + Maze; either drop ARC-AGI or move to Future Work consistently
+- [X] **Capitalize subsection titles** for consistency: `\subsection{limitations}` → `\subsection{Limitations}`, same for `\subsection{future work}` → `\subsection{Future Work}`
 
 ---
 
 ## 🔴 2. main.tex — naming consistency
 
-- [ ] **Unify "SHREK Tiny" vs "SHREK Small"** — FLOPs script renamed Tiny → Small. Decide on one name, then update all of:
+- [X] **Unify "SHREK Tiny" vs "SHREK Small"** — FLOPs script renamed Tiny → Small. Decide on one name, then update all of:
   - Tables II, III, IV (results)
   - Tables V, VI (FLOPs)
   - Discussion paragraphs
@@ -37,7 +37,7 @@ Complete pre-submission cleanup list. Covers `main.tex`, code, FLOPs, and submis
 
 ### Direct deletions
 
-- [ ] **Delete annotation block** lines 521–580 (everything after `\end{document}`) — leftover chat notes that shouldn't ship with the source
+- [X] **Delete annotation block** lines 521–580 (everything after `\end{document}`) — leftover chat notes that shouldn't ship with the source
 - [ ] **Delete intro repeat** (line 73) — *"Motivated by this insight, we propose the SHREK-HRM..."* duplicates the same sentence in line 62
 - [ ] **Delete duplicated paragraph** lines 272–276 — the two sentences *"We removed the second inner forward pass that AugmentedHRM used... two variants..."* appear twice in Section IV-D
 
@@ -45,9 +45,9 @@ Complete pre-submission cleanup list. Covers `main.tex`, code, FLOPs, and submis
 
 None of these inform SHREK's design. Removing tightens lit review by ~1.5 PDF pages.
 
-- [ ] **Delete subsection** *"Can We Trust AI Benchmarks?"* (Eriksson et al.) — line 118
-- [ ] **Delete subsection** *"Assessing Small Language Models for Code Generation"* (Hasan et al.) — line 126
-- [ ] **Delete subsection** *"Benchmarking is Broken"* (Cheng et al.) — line 134
+- [X] **Delete subsection** *"Can We Trust AI Benchmarks?"* (Eriksson et al.) — line 118
+- [X] **Delete subsection** *"Assessing Small Language Models for Code Generation"* (Hasan et al.) — line 126
+- [X] **Delete subsection** *"Benchmarking is Broken"* (Cheng et al.) — line 134
 - [ ] **Optional**: fold one sentence into Introduction citing Eriksson — *"Concerns about benchmark trustworthiness [eriksson2025trustbenchmarks] further motivate honest, identical-hardware comparisons of compact reasoning models."*
 
 ### Compress overlapping sections
@@ -78,26 +78,6 @@ None of these inform SHREK's design. Removing tightens lit review by ~1.5 PDF pa
   - `cluster.md` (your private notes about cluster login)
   - `SHREKV4.md` (V4 work plan, not relevant to V1 paper)
   - These can be removed from `Project-Attachment-GroupXX.zip` even if kept in repo
-
----
-
-## ✏️ 5. Spelling / grammar pass on Discussion + Conclusion
-
-Common typos to fix (search + replace):
-
-- [ ] "hierarchial" → "hierarchical" (multiple)
-- [ ] "ocisilation" → "oscillation"
-- [ ] "reasonin" → "reasoning" (multiple)
-- [ ] "compational" → "computational"
-- [ ] "effecting" → "effective"
-- [ ] "consistenyl" → "consistently"
-- [ ] "despiste" → "despite"
-- [ ] "form" → "from" (where used as preposition)
-- [ ] "primarliy" → "primarily"
-- [ ] "green ai" → "Green AI"
-- [ ] "Shrek LARGE" → "SHREK Large"
-- [ ] "MAZE" → "Maze" (in body text — use Title Case for task names)
-- [ ] "sudoku" → "Sudoku" (Title Case)
 
 ---
 
