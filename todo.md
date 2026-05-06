@@ -11,7 +11,7 @@ Complete pre-submission cleanup list. Covers `main.tex`, code, FLOPs, and submis
 - [ ] **Fix wrong citations** in Materials section (line 236): `\cite{hoffmann2022training, cuskley2024limitations}` is wrong for HRM/TRM reference numbers — change to `\cite{wang2025hierarchicalreasoningmodel, jolicoeurmartineau2025morerecursivereasoningtiny}`
 - [X] **Fix "six key findings" miscount** (line 451) — list contains only 5 items, either add a 6th or change "six" → "five"
 - [X] **Fix "augmented hint variant"** (line 230) — your verified runs use **vanilla** Sudoku-Extreme-1k-aug-1000 (no hint), not the hint variant
-- [ ] **Fix sample-size inconsistency** — line 394 says "100 test puzzles", line 305 says "1000 test samples"; pick one and use everywhere
+- [x] **Fix sample-size inconsistency** — line 394 says "100 test puzzles", line 305 says "1000 test samples"; pick one and use everywhere
 - [X] **Fix "All four models"** (line 230) — you trained 5: HRM, TRM-Att, TRM-MLP, SHREK-Large, SHREK-Tiny
 - [ ] **Fix Sudoku hyperparameters in Methodology** (line 230) — currently says `lr=7e-5, batch=384`, but your verified runs used `lr=1e-4, batch=768` (matching TRM)
 - [X] **Remove ARC-AGI mentions** in Methodology (line 232) — you only evaluate Sudoku + Maze; either drop ARC-AGI or move to Future Work consistently
@@ -100,8 +100,8 @@ After the latest cluster FLOPs run (1111727 or successor) finishes:
   - Re-verify the source of the 57% number (separate run? different metric?)
   - OR add a footnote acknowledging the gap
   - OR replace with the verified ~67% from chart
-- [ ] **Section II-A end** says HRM compared "exactly comparing apples to apples" issue — review wording, currently a bit informal
-- [ ] **Section III research gap "Gap 2: Gap 2"** (line 167) — duplicated label, fix
+- [X] **Section II-A end** says HRM compared "exactly comparing apples to apples" issue — review wording, currently a bit informal
+- [X] **Section III research gap "Gap 2: Gap 2"** (line 167) — duplicated label, fix
 - [ ] **Section IV-A "Approach"** — bullet list mentions "Logical Floor" and "Inference-Time Stuck Alarm" (early plan terms) but the actual implementation in Section IV-D uses "error injection" and "stagnation delta" — terminology drift, unify
 
 ---
