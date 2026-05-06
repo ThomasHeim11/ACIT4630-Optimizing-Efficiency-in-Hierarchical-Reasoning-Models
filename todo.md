@@ -27,7 +27,7 @@ Complete pre-submission cleanup list. Covers `main.tex`, code, FLOPs, and submis
   - Discussion paragraphs
   - Conclusion paragraphs
   - Abstract / contributions list
-- [ ] **TRM MLP consistency** — appears in Table II (Sudoku, 84%) and FLOPs Sudoku table, but you decided to drop TRM MLP from FLOPs comparison. Either:
+- [X] **TRM MLP consistency** — appears in Table II (Sudoku, 84%) and FLOPs Sudoku table, but you decided to drop TRM MLP from FLOPs comparison. Either:
   - Remove TRM MLP row from both Table II and FLOPs table, OR
   - Keep TRM MLP in both with a note (e.g., "MLP variant shown for reference; not included in FLOPs comparison because it uses a different architecture family")
 
