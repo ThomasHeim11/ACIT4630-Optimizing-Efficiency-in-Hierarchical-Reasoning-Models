@@ -266,16 +266,18 @@ MODEL_COLORS = {
     "TRM MLP":        "#2ecc71",
 }
 
-# Single checkpoint, vanilla dataset accuracy (%) from results.md
+# Single-checkpoint test accuracy (%). SHREK rows are the verified test.py
+# numbers from the report (Tables II, III). Baselines are reported values
+# from the original HRM/TRM papers since we did not re-evaluate them.
 MODEL_ACCURACY = {
     ("Original HRM", "sudoku"):  53.0,
-    ("SHREK Large", "sudoku"):   65.0,
-    ("SHREK Small", "sudoku"):    63.0,
+    ("SHREK Large", "sudoku"):   63.5,
+    ("SHREK Small", "sudoku"):   63.1,
     ("TRM Attention", "sudoku"): 70.0,
     ("TRM MLP", "sudoku"):       84.0,
     ("Original HRM", "maze"):    75.0,
-    ("SHREK Large", "maze"):     83.0,
-    ("SHREK Small", "maze"):      73.0,
+    ("SHREK Large", "maze"):     81.1,
+    ("SHREK Small", "maze"):     69.7,
     ("TRM Attention", "maze"):   87.0,
 }
 
