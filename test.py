@@ -86,6 +86,16 @@ def ensure_dir_populated(local_dir: Path, hf_repo: str, repo_type: str = "model"
 # models, so this script targets SHREK's pretrain.py API directly.
 INLINE_EVAL = r"""
 import os, sys, yaml, torch
+
+# Force-disable TorchDynamo / TorchInductor before importing pretrain.py.
+# pretrain.py wraps the model in torch.compile() inside init_train_state(),
+# which triggers nvrtc-based kernel JIT at first forward pass. On cluster
+# nodes that don't ship libnvrtc-builtins.so.13.0 this fails. Disabling
+# dynamo here turns torch.compile into a no-op so eval runs in pure eager
+# mode regardless of the host's CUDA toolkit layout.
+torch._dynamo.config.disable = True
+torch._dynamo.config.suppress_errors = True
+
 sys.path.insert(0, os.getcwd())
 
 from pretrain import PretrainConfig, init_train_state, create_dataloader, evaluate as _evaluate
