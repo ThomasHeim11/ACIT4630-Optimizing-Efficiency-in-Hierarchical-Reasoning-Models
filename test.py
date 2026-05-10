@@ -27,11 +27,33 @@ Usage
     python test.py
 """
 
+import glob
 import os
 import re
+import site
 import subprocess
 import sys
 from pathlib import Path
+
+# Make pip-bundled CUDA libs (libnvrtc-builtins.so.*, libcudart.so.*, etc.)
+# discoverable at runtime. PyTorch wheels expect these on the dynamic loader
+# path, but on some cluster nodes the system path doesn't include them. They
+# always live inside site-packages/nvidia/<pkg>/lib/ when torch was pip-installed
+# with its CUDA dependencies, so we discover them and prepend to LD_LIBRARY_PATH.
+# This makes test.py portable across nodes (we hit a real failure on a cluster
+# node that was missing libnvrtc-builtins.so.13.0 from the system path).
+_site_roots = list(site.getsitepackages())
+try:
+    _site_roots.append(site.getusersitepackages())
+except Exception:
+    pass
+_nvidia_lib_dirs = []
+for _root in _site_roots:
+    _nvidia_lib_dirs.extend(glob.glob(os.path.join(_root, "nvidia", "*", "lib")))
+if _nvidia_lib_dirs:
+    _existing = os.environ.get("LD_LIBRARY_PATH", "")
+    _parts = _nvidia_lib_dirs + ([_existing] if _existing else [])
+    os.environ["LD_LIBRARY_PATH"] = ":".join(_parts)
 
 # Disable HuggingFace's xet-based downloads. The xet client has known native-library
 # issues on some systems (missing .so files); the regular HTTP download path is more
