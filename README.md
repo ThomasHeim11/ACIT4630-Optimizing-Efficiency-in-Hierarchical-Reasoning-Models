@@ -1,263 +1,119 @@
-# SHREK-HRM: Self-Corrective Hierarchical Reasoning
+# SHREK-HRM
 
-**SHREK-HRM** (**S**tagnation **H**alting **R**easoning **E**rror **K**nowledge) extends the Hierarchical Reasoning Model with learned self-correction. Instead of relying on expensive inference-time techniques (checkpoint ensembles, token permutations), SHREK injects an error signal directly into the reasoning process, enabling the model to detect and correct its own mistakes during inference.
-
-This repository benchmarks SHREK-HRM against HRM and Tiny Recursive Models on Sudoku-Extreme and Maze-Hard.
+This repository accompanies the ACIT4630 group project report on SHREK-HRM (Self-Corrective Hierarchical Reasoning Model). `test.py` reproduces the SHREK-Large and SHREK-Small evaluation numbers reported in the paper.
 
 ---
 
-## Model Architectures
+## Prerequisites
 
-| Model | Parameters | Layers | Key Feature |
-|---|---|---|---|
-| Original HRM | ~27M | 4H + 4L, hidden=512 | Baseline recursive reasoning |
-| TRM Attention | ~7M | 2 layers, hidden=512 | Simplified recursive reasoning |
-| TRM MLP | ~5M | 2 layers, hidden=512 | MLP-only variant (no attention) |
-| **SHREK Large** | **~27M** | **4H + 4L, hidden=512** | **+ Error estimator, error injection, EMA** |
-| **SHREK Small** | **~14M** | **2H + 2L, hidden=512** | **+ Error estimator, error injection, EMA** |
+- NVIDIA GPU with CUDA 12.6 (tested on GH200)
+- Python 3.10+
+- ~20 GB free disk for the auto-downloaded checkpoints + datasets
 
-All HRM-family models share: `H_cycles=2, L_cycles=2, halt_max_steps=16, expansion=4`.
-TRM uses: `H_cycles=3, L_cycles=6 (Sudoku) / L_cycles=4 (Maze)`.
-
----
-
-## SHREK Architecture
-
-SHREK adds two components to the base HRM architecture:
-
-### 1. Error-Conditioned Input Injection
-
-After each reasoning step, SHREK computes an error signal and injects it back into `z_H`:
-
-```
-z_H = z_H + alpha * error_encoder(error) / sqrt(hidden_size)
-```
-
-The error signal combines:
-- **Flip rate** — fraction of output tokens that changed vs previous step (task-agnostic, no learning needed)
-- **Learned error estimator** — neural network predicting model's error from detached `z_H`
-
-Alpha follows a linear warmup from 0 to 0.01 over 5000 steps.
-
-### 2. Stagnation-Aware Q-Head
-
-The Q-head receives a stagnation signal measuring how much `z_H` changed:
-
-```
-delta = ||z_H_end - z_H_start|| / (||z_H_start|| + epsilon)
-q_logits = q_head(concat(z_H[:, 0], delta))
-```
-
-This helps the Q-head distinguish "converged correctly" from "stuck on wrong answer."
-
-### Parameter Overhead
-
-| Component | Parameters |
-|---|---|
-| Error encoder (1 -> hidden_size) | 513 |
-| Error estimator (hidden_size -> 1) | 513 |
-| Stagnation scalar in Q-head | +2 |
-| **Total overhead** | **~1K (<0.01%)** |
-
----
-
-## Results
-
-### Sudoku-Extreme (1000 training examples)
-
-All models trained on 1x NVIDIA GH200 GPU (102GB VRAM).
-
-**Single Checkpoint Test Accuracy** (`all.exact_accuracy`):
-
-| Model | Parameters | Exact Accuracy |
-|---|---|---|
-| TRM MLP | ~5M | ~84% |
-| TRM Attention | ~7M | ~70% |
-| **SHREK Large** | **~27M** | **~65%** |
-| **SHREK Small** | **~14M** | **~63%** |
-| Original HRM | ~27M | 53% |
-
-**Key findings:**
-- SHREK Large (~65%) outperforms Original HRM (53%) by 12 percentage points
-- SHREK Small (~63%) surpasses 27M-parameter Original HRM with only 14M parameters
-
-### Maze-Hard (1000 training examples)
-
-| Model | Parameters | Exact Accuracy |
-|---|---|---|
-| TRM Attention | ~7M | ~87% |
-| **SHREK Large** | **~27M** | **~83%** |
-| Original HRM | ~27M | ~75% |
-| **SHREK Small** | **~14M** | **~73%** |
-
-**Key findings:**
-- SHREK Large (~83%) outperforms Original HRM (~75%) by 8 percentage points
-- SHREK Small (~73%) matches Original HRM with roughly half the parameters
-
----
-
-## Reproducing Experiments
-
-### Prerequisites
-
-- NVIDIA GPU with CUDA 12.6 (tested on GH200, 102GB VRAM)
-- Python 3.10
-- PyTorch 2.10+
-
-### Setup
+## Setup
 
 ```bash
-pip install torch flash-attn einops tqdm coolname pydantic argdantic wandb omegaconf hydra-core
-pip install adam-atan2-pytorch==0.2.8
-
-# Create import shim for backward compatibility with adam-atan2 v0.0.3
-echo "from adam_atan2_pytorch.adam_atan2 import AdamAtan2 as AdamATan2" > \
-    $(python -c "import adam_atan2; print(adam_atan2.__path__[0])")/adam_atan2.py
-
-wandb login
+pip install -r requirements.txt
 ```
 
-### Dataset Preparation
+## Run
+
+### On a local NVIDIA + CUDA machine
 
 ```bash
-# Sudoku-Extreme (vanilla)
-python dataset/build_sudoku_dataset.py \
-    --output-dir data/sudoku-extreme-1k-aug-1000 \
-    --subsample-size 1000 --num-aug 1000
-
-# Sudoku-Extreme (with hints)
-python dataset/build_sudoku_dataset.py \
-    --output-dir data/sudoku-extreme-1k-aug-1000-hint \
-    --subsample-size 1000 --num-aug 1000 --hint
-
-# Maze-Hard
-python dataset/build_maze_dataset.py
+python test.py
 ```
 
-### Training Commands
+### On the Simula HPC cluster (recommended for graders)
 
-All training scripts are in each model's `script/train/` directory and can be submitted via SLURM:
+The model was trained on Simula's `gh200q` partition; `run_test.sh` is a portable SLURM wrapper that runs `test.py` on the same partition. Logs go into `./logs/` relative to the directory you submit from — no paths are hardcoded.
+
+#### 1. Copy the submission ZIP to the cluster
+
+From your local machine:
 
 ```bash
-module load slurm
-
-# Sudoku-Extreme
-sbatch source/HRM\(Original\)/HRM-main/script/train/train_hrm_sudoku_1gpu.sh
-sbatch source/SHREK-HRM/script/train/train_shrek_large_sudoku.sh
-sbatch source/SHREK-HRM/script/train/train_shrek_tiny_sudoku.sh
-sbatch source/TinyRecursiveModels/script/train/train_trm_mlp_sudoku.sh
-sbatch source/TinyRecursiveModels/script/train/train_trm_att_sudoku.sh
-
-# Maze-Hard
-sbatch source/HRM\(Original\)/HRM-main/script/train/train_hrm_maze_1gpu.sh
-sbatch source/SHREK-HRM/script/train/train_shrek_large_maze.sh
-sbatch source/SHREK-HRM/script/train/train_shrek_tiny_maze.sh
-sbatch source/TinyRecursiveModels/script/train/train_trm_att_maze.sh
+scp Project-Attachment-GroupXX.zip <user>@dnat.simula.no:~/
 ```
 
-**Hyperparameter summary:**
-
-| Parameter | Original HRM (Sudoku) | All others |
-|---|---|---|
-| lr | 7e-5 | 1e-4 |
-| global_batch_size | 384 | 768 |
-| epochs | 20,000 | 40,000 (Sudoku) / 20,000 (Maze) |
-| weight_decay | 1.0 | 1.0 |
-| eval_interval | 1,000 | 1,000 |
-
-Original HRM uses the paper's 1-GPU recipe. All others use the 8-GPU recipe since GH200 has enough VRAM.
-
-### Evaluation
-
-**Single checkpoint:** Check `all.exact_accuracy` in Weights & Biases.
-
-**Ensemble evaluation** (10 checkpoints + 9 token permutations):
+#### 2. SSH into the cluster
 
 ```bash
-cd source/hrm-mechanistic-analysis-main  # or SHREK-HRM
-DISABLE_COMPILE=1 python3 batch_inference.py \
-    --checkpoints "step1,step2,...,step10" \
-    --permutes 9 \
-    --num_batch 10 --batch_size 100
+ssh <user>@dnat.simula.no -p 60441
 ```
 
-### FLOPs Measurement
+#### 3. Unzip and enter the project
 
 ```bash
-sbatch flops/measure_all_flops.sh
+unzip Project-Attachment-GroupXX.zip -d shrek-hrm
+cd shrek-hrm
+```
+
+#### 4. Create a Python virtual environment and install dependencies
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+The first `pip install -r requirements.txt` takes ~10 minutes because `flash-attn` is built from source. If the install fails because the login node runs out of memory, run the same `pip install -r requirements.txt` command inside an interactive GPU session (`srun -p gh200q --gres=gpu:1 -t 00:30:00 --pty bash`).
+
+#### 5. Submit the evaluation job
+
+```bash
+mkdir -p logs
+sbatch run_test.sh
+```
+
+`sbatch` prints a job ID — note it down.
+
+#### 6. Wait for the job to finish
+
+```bash
+squeue -u $USER
+```
+
+Once the job disappears from the queue (typically 10–15 min after it starts running), it is done. Queue wait time depends on cluster load.
+
+#### 7. Read the results
+
+```bash
+cat logs/test_py_<JOBID>.log
+```
+
+The script prints an accuracy table with one row per (model, task) pair, matching the format in the report.
+
+### Notes
+
+- On first run, `test.py` automatically downloads the checkpoints and test datasets from HuggingFace into `model/` and `data/`. Subsequent runs skip the download.
+- All paths and HuggingFace repo IDs live in `config.yaml` so `test.py` itself runs unmodified. Edit `config.yaml` only if you need to point at a different checkpoint or dataset location.
+- Total runtime is ~10–15 min on a single NVIDIA GH200 (or comparable GPU).
+
+---
+
+## Repository layout
+
+```
+shrek-hrm/
+├── source/             # Model code (SHREK-HRM, HRM, TRM)
+├── flops/              # FLOPs measurement scripts
+├── model/              # Auto-created on first test.py run (HuggingFace download)
+├── data/               # Auto-created on first test.py run (HuggingFace download)
+├── logs/               # SLURM job logs (created by run_test.sh)
+├── config.yaml         # Paths + settings consumed by test.py
+├── test.py             # Evaluation entry point
+├── run_test.sh         # SLURM wrapper for the Simula cluster
+├── requirements.txt    # Pip dependencies
+└── main.tex            # Project report source
 ```
 
 ---
 
-## Repository Structure
+## Pre-trained artefacts
 
-```
-HMR/
-├── models/
-│   ├── HRM(Original)/HRM-main/       # Original HRM (Wang et al., 2025)
-│   ├── TinyRecursiveModels/           # TRM (Jolicoeur-Martineau, 2025)
-│   └── SHREK-HRM/                     # SHREK-HRM (ours)
-├── dataset/data/                      # Training and test datasets
-├── checkpoints/                       # Trained model checkpoints
-├── flops/                             # FLOPs measurement scripts
-├── papers/                            # Reference papers
-├── BUGFIX.md                          # SHREK bug fix documentation
-└── RunningModelsTried.md              # Training run history and lessons
-```
+- **Checkpoints**: [ThomasHeim/HRM-Reproduction-Checkpoints](https://huggingface.co/ThomasHeim/HRM-Reproduction-Checkpoints)
+- **Dataset**: [ThomasHeim/HRM-dataset](https://huggingface.co/datasets/ThomasHeim/HRM-dataset)
 
----
-
-## Hardware
-
-| Spec | Value |
-|---|---|
-| GPU | NVIDIA GH200 480GB |
-| VRAM | 102 GB |
-| CPU Cores | 72 |
-| RAM | 573 GB |
-| CUDA | 12.6 |
-| Cluster | Simula Research Laboratory HPC (2 nodes: gh001, gh002) |
-
----
-
-## Computational Efficiency (FLOPs)
-
-Inference FLOPs measured on GPU using PyTorch's `FlopCounterMode` over 1000 test puzzles. GF/puzzle = GF/step x average halting steps.
-
-**Sudoku-Extreme:**
-
-| Model | Params | Steps | GF/step | GF/puzzle | Accuracy |
-|---|---|---|---|---|---|
-| SHREK Small | ~14M | 10.7 | 6.71 | 71.6 | ~63% |
-| SHREK Large | ~27M | 8.6 | 13.41 | 115.6 | ~65% |
-| Original HRM | ~27M | 10.6 | 13.41 | 141.6 | 53% |
-| TRM MLP | ~5M | 5.7 | 25.63 | 146.4 | ~84% |
-| TRM Attention | ~7M | 7.6 | 28.58 | 217.9 | ~70% |
-
-**Maze-Hard:**
-
-| Model | Params | Steps | GF/step | GF/puzzle | Accuracy |
-|---|---|---|---|---|---|
-| TRM Attention | ~7M | 1.2 | 238.85 | 275.4 | ~87% |
-| SHREK Small | ~14M | 5.0 | 73.70 | 369.2 | ~73% |
-| Original HRM | ~27M | 6.4 | 147.39 | 941.1 | ~75% |
-| SHREK Large | ~27M | 10.1 | 147.39 | 1481.0 | ~83% |
-
----
-
-## Pre-trained Checkpoints & Dataset
-
-- **Checkpoints**: [HRM-Reproduction-Checkpoints](https://huggingface.co/ThomasHeim/HRM-Reproduction-Checkpoints/tree/main) — All trained model weights (Original HRM, SHREK Large/Tiny, TRM Attention/MLP)
-- **Dataset**: [HRM-dataset](https://huggingface.co/datasets/ThomasHeim/HRM-dataset) — Sudoku-Extreme and Maze-Hard datasets
-
----
-
-## Source Papers
-
-- **HRM**: [Hierarchical Reasoning Model](https://arxiv.org/abs/2506.21734) (Wang et al., 2025)
-- **Augmented HRM**: [Are Your Reasoning Models Reasoning or Guessing?](https://arxiv.org/abs/2601.10679) (Ren & Liu, 2026)
-- **TRM**: [Less is More: Recursive Reasoning with Tiny Networks](https://arxiv.org/abs/2510.04871) (Jolicoeur-Martineau, 2025)
-
-## Acknowledgements
-
-Built on code from [sapientinc/HRM](https://github.com/sapientinc/HRM), [renrua52/hrm-mechanistic-analysis](https://github.com/renrua52/hrm-mechanistic-analysis), and [TRM](https://github.com/AlexiaJM/TinyRecursiveModels).
+Both are downloaded automatically by `test.py` — no manual setup required.
