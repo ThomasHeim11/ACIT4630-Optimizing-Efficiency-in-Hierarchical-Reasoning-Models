@@ -101,12 +101,10 @@ shrek-hrm/
 ├── flops/              # FLOPs measurement scripts
 ├── model/              # Auto-created on first test.py run (HuggingFace download)
 ├── data/               # Auto-created on first test.py run (HuggingFace download)
-├── logs/               # SLURM job logs (created by run_test.sh)
 ├── config.yaml         # Paths + settings consumed by test.py
 ├── test.py             # Evaluation entry point
 ├── run_test.sh         # SLURM wrapper for the Simula cluster
 ├── requirements.txt    # Pip dependencies
-└── main.tex            # Project report source
 ```
 
 ---
