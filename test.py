@@ -38,6 +38,14 @@ from pathlib import Path
 # reliable. Set before importing huggingface_hub so the env var is honored.
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
+# Disable torch.compile / TorchInductor. The model is small enough that compile gives
+# negligible speedup at eval time, and inductor's nvrtc-based kernel JIT requires a
+# matching libnvrtc-builtins.so on the host — which is missing on some cluster nodes
+# (we hit `nvrtc: error: failed to open libnvrtc-builtins.so.13.0` on one GH200 node
+# while a sibling node worked fine). Forcing eager mode makes test.py portable.
+os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+os.environ.setdefault("TORCHINDUCTOR_DISABLE", "1")
+
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent
