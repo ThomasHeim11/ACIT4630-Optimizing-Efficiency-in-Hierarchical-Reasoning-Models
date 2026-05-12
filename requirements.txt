@@ -1,5 +1,5 @@
 torch==2.11.0
-flash-attn==2.8.3
+flash-attn==2.8.3 --no-build-isolation
 adam-atan2-pytorch==0.2.8
 einops==0.8.2
 tqdm==4.67.3
