@@ -13,8 +13,12 @@ This repository accompanies the ACIT4630 group project report on SHREK-HRM (Self
 
 ## Setup
 
+`flash-attn` must be compiled from source and requires CUDA. Install in two steps:
+
 ```bash
+module load cuda12.6/toolkit/12.6.3
 pip install -r requirements.txt
+pip install flash-attn==2.8.3 --no-build-isolation
 ```
 
 ## Run (Simula cluster)
@@ -42,16 +46,16 @@ unzip Project-Attachment-Group03.zip -d shrek-hrm
 cd shrek-hrm
 ```
 
-#### 4. Create a Python virtual environment and install dependencies
+#### 4. Install dependencies
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+module load cuda12.6/toolkit/12.6.3
 pip install --upgrade pip
 pip install -r requirements.txt
+pip install flash-attn==2.8.3 --no-build-isolation
 ```
 
-The first `pip install -r requirements.txt` takes ~10 minutes because `flash-attn` is built from source. If the install fails because the login node runs out of memory, run the same `pip install -r requirements.txt` command inside an interactive GPU session (`srun -p gh200q --gres=gpu:1 -t 00:30:00 --pty bash`).
+The `flash-attn` install takes ~10 minutes as it compiles from source. It must be installed separately because it requires `torch` to be present during build.
 
 #### 5. Submit the evaluation job
 
