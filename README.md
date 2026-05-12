@@ -121,6 +121,5 @@ shrek-hrm/
 
 - **Checkpoints**: https://huggingface.co/ThomasHeim/HRM-Reproduction-Checkpoints
 - **Dataset**: https://huggingface.co/datasets/ThomasHeim/HRM-dataset
-- **Source code**: https://github.com/ThomasHeim11/SHREK-HRM
 
 Both are downloaded automatically by `test.py` — no manual setup required.
