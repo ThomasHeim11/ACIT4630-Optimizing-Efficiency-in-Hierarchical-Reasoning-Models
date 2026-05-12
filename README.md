@@ -50,6 +50,7 @@ The `flash-attn` install takes ~10 minutes as it compiles from source. It must b
 #### 5. Submit the evaluation job
 
 ```bash
+module load slurm/21.08.8
 mkdir -p logs
 sbatch run_test.sh
 ```
