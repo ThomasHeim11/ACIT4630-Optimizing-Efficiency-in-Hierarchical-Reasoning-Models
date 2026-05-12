@@ -11,16 +11,6 @@ This repository accompanies the ACIT4630 group project report on SHREK-HRM (Self
 - Python 3.10+
 - ~20 GB free disk for the auto-downloaded checkpoints + datasets
 
-## Setup
-
-`flash-attn` must be compiled from source and requires CUDA. Install in two steps:
-
-```bash
-module load cuda12.6/toolkit/12.6.3
-pip install -r requirements.txt
-pip install flash-attn==2.8.3 --no-build-isolation
-```
-
 ## Run (Simula cluster)
 
 The model was trained on Simula's `gh200q` partition; `run_test.sh` is a portable SLURM wrapper that runs `test.py` on the same partition. Logs go into `./logs/` relative to the directory you submit from — no paths are hardcoded.
