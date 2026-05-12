@@ -24,7 +24,7 @@ pip install -r requirements.txt
 python test.py
 ```
 
-### On the Simula HPC cluster (recommended for graders)
+### On the Simula cluster (recommended for graders)
 
 The model was trained on Simula's `gh200q` partition; `run_test.sh` is a portable SLURM wrapper that runs `test.py` on the same partition. Logs go into `./logs/` relative to the directory you submit from — no paths are hardcoded.
 
@@ -33,7 +33,7 @@ The model was trained on Simula's `gh200q` partition; `run_test.sh` is a portabl
 From your local machine:
 
 ```bash
-scp Project-Attachment-GroupXX.zip <user>@dnat.simula.no:~/
+scp Project-Attachment-Group03.zip <user>@dnat.simula.no:~/
 ```
 
 #### 2. SSH into the cluster
@@ -45,7 +45,7 @@ ssh <user>@dnat.simula.no -p 60441
 #### 3. Unzip and enter the project
 
 ```bash
-unzip Project-Attachment-GroupXX.zip -d shrek-hrm
+unzip Project-Attachment-Group03.zip -d shrek-hrm
 cd shrek-hrm
 ```
 
@@ -90,6 +90,26 @@ The script prints an accuracy table with one row per (model, task) pair, matchin
 - On first run, `test.py` automatically downloads the checkpoints and test datasets from HuggingFace into `model/` and `data/`. Subsequent runs skip the download.
 - All paths and HuggingFace repo IDs live in `config.yaml` so `test.py` itself runs unmodified. Edit `config.yaml` only if you need to point at a different checkpoint or dataset location.
 - Total runtime is ~10–15 min on a single NVIDIA GH200 (or comparable GPU).
+
+---
+
+## Training
+
+Training scripts are provided in `source/SHREK-HRM/script/train/`. Each script is a SLURM job configured for the Simula `gh200q` partition. To train SHREK-Large on Maze-Hard, for example:
+
+```bash
+cd source/SHREK-HRM
+sbatch script/train/train_shrek_large_maze.sh
+```
+
+Available training scripts:
+
+| Script | Model | Dataset |
+|--------|-------|---------|
+| `train_shrek_large_maze.sh` | SHREK-Large | Maze-Hard |
+| `train_shrek_tiny_maze.sh` | SHREK-Small | Maze-Hard |
+
+Ablation study scripts are in `source/SHREK-HRM/script/train/AblationStudy/` and cover all configurations reported in Table IV of the paper. All hyperparameters are set within the scripts (learning rate, batch size, epochs, etc.) and match the values reported in the paper. Training requires a single NVIDIA GH200 GPU and the datasets from `dataset/data/`.
 
 ---
 
