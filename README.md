@@ -6,7 +6,8 @@ This repository accompanies the ACIT4630 group project report on SHREK-HRM (Self
 
 ## Prerequisites
 
-- NVIDIA GPU with CUDA 12.6 (tested on GH200)
+- **Simula Research Laboratory cluster** (required, the code depends on `flash-attn` and `adam-atan2` which require Linux and NVIDIA CUDA. It will not run on Windows or macOS.)
+- NVIDIA GPU with CUDA 12.6 (tested on GH200 via the `gh200q` partition)
 - Python 3.10+
 - ~20 GB free disk for the auto-downloaded checkpoints + datasets
 
@@ -16,15 +17,7 @@ This repository accompanies the ACIT4630 group project report on SHREK-HRM (Self
 pip install -r requirements.txt
 ```
 
-## Run
-
-### On a local NVIDIA + CUDA machine
-
-```bash
-python test.py
-```
-
-### On the Simula cluster (recommended for graders)
+## Run (Simula cluster)
 
 The model was trained on Simula's `gh200q` partition; `run_test.sh` is a portable SLURM wrapper that runs `test.py` on the same partition. Logs go into `./logs/` relative to the directory you submit from — no paths are hardcoded.
 
@@ -104,10 +97,10 @@ sbatch script/train/train_shrek_large_maze.sh
 
 Available training scripts:
 
-| Script | Model | Dataset |
-|--------|-------|---------|
+| Script                      | Model       | Dataset   |
+| --------------------------- | ----------- | --------- |
 | `train_shrek_large_maze.sh` | SHREK-Large | Maze-Hard |
-| `train_shrek_tiny_maze.sh` | SHREK-Small | Maze-Hard |
+| `train_shrek_tiny_maze.sh`  | SHREK-Small | Maze-Hard |
 
 Ablation study scripts are in `source/SHREK-HRM/script/train/AblationStudy/` and cover all configurations reported in Table IV of the paper. All hyperparameters are set within the scripts (learning rate, batch size, epochs, etc.) and match the values reported in the paper. Training requires a single NVIDIA GH200 GPU and the datasets from `dataset/data/`.
 
